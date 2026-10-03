@@ -917,10 +917,6 @@ class GameWorldBase(Widget):
             self.cached_btn_dist = min_btn if min_btn != 9999 else None
 
     def get_enemy_los(self, en, enemy_positions):
-        """Луч взгляда врага.
-        - Не включает собственную клетку врага.
-        - Не включает клетку с другим врагом — луч на ней обрывается.
-        """
         visible = set()
         ex, ey = en['current_cell']
         edir = en['dir']
@@ -1009,7 +1005,6 @@ class GameWorldBase(Widget):
         return x
 
     def enemy_tick(self):
-        # 1. Сдвигаем врагов в клетки, куда они уже доехали.
         for en in self.enemies:
             en['current_cell'] = en['next_cell']
             en['grid'] = Vector(*en['current_cell'])
@@ -1017,12 +1012,8 @@ class GameWorldBase(Widget):
         app = App.get_running_app()
         enemy_positions = {en['current_cell'] for en in self.enemies}
 
-        # 2. Определяем намерения на следующий ход.
         intents = self._resolve_enemy_intents()
 
-        # 3. Обновляем направление и пересчитываем видимость.
-        # Враг, только что повернувший, СРАЗУ видит в новом направлении.
-        # Вставший враг (dir == VEC_ZERO) никого не видит.
         union_vis = set()
         for en in self.enemies:
             tgt = intents.get(en['idx'])
@@ -1041,8 +1032,6 @@ class GameWorldBase(Widget):
 
         self.union_visible_cells = union_vis
 
-        # 4. Проверка обнаружения на тике — только если игрок целиком
-        #    стоит на одной клетке.
         self.last_p_cells = self.get_occupied_cells(self.p_pixel)
         if len(self.last_p_cells) == 1:
             cell = next(iter(self.last_p_cells))
@@ -1202,8 +1191,9 @@ class GameWorldBase(Widget):
             ticked = True
             if not self.active:
                 # [FIX-VISUAL] Финальный рендер врагов — чтобы игрок увидел
-                # их уже стоящими в новой клетке и развёрнутыми в новую сторону.
-                gx2, gy2 = int(self.player_grid.x), int(self.player_grid.y)
+                # их уже стоящими в новой клетке и развёрнутыми в его сторону.
+                gx2 = int(self.player_grid.x)
+                gy2 = int(self.player_grid.y)
                 if self.IS_LARGE:
                     self.draw_entities(gx2, gy2)
                 else:
@@ -2323,4 +2313,95 @@ class GameScreen(Screen):
             lbl = Label(text="Victory", font_size='50sp', color=(0, 1, 0, 0.7),
                         bold=True, pos_hint={'center_y': 0.6})
             btn = Button(text=f'Level {App.get_running_app().current_level + 1}',
-                         size_hint=(0
+                         size_hint=(0.8, 0.1), pos_hint={'center_x': 0.5, 'y': 0.05})
+            btn.bind(on_release=lambda x: self.next_lvl())
+            overlay.add_widget(lbl)
+            overlay.add_widget(btn)
+        else:
+            lbl = Label(text="Defeat", font_size='23sp', color=(1, 0, 0, 0.7),
+                        bold=True, pos_hint={'center_y': 0.6})
+            btn_last = Button(text='Last', font_size='22sp',
+                              size_hint=(1.0, 0.15),
+                              pos_hint={'center_x': 0.5, 'y': 0.12})
+            btn_prev = Button(text='Prev', font_size='13sp',
+                              size_hint=(0.4, 0.06),
+                              pos_hint={'center_x': 0.5, 'y': 0.02})
+            btn_prev.bind(on_release=lambda x: self.restart_from('pre_last'))
+            btn_last.bind(on_release=lambda x: self.restart_from('last'))
+            overlay.add_widget(lbl)
+            overlay.add_widget(btn_last)
+            overlay.add_widget(btn_prev)
+        self.f.add_widget(overlay)
+
+    def next_lvl(self):
+        app = App.get_running_app()
+        app.is_restarting = False
+        app.current_level += 1
+        app.load_slot = 'last'
+        delete_all_saves()
+        try:
+            map_file = get_map_file()
+            if os.path.exists(map_file):
+                os.remove(map_file)
+        except OSError:
+            pass
+        self.manager.current = 'loading'
+
+    def restart_from(self, slot):
+        app = App.get_running_app()
+        app.load_slot = slot
+        app.is_restarting = True
+        self.on_leave()
+        self.on_enter()
+
+
+class MenuScreen(Screen):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        l = FloatLayout()
+        l.add_widget(Label(text="Maze", font_size='50sp', pos_hint={'center_y': 0.85}))
+        for y, text, mode in [(0.60, '100x100', MODE_100),
+                              (0.44, '50x50', MODE_50),
+                              (0.28, '20x20', MODE_20)]:
+            btn = Button(text=text, font_size='30sp', bold=True,
+                         size_hint=(.6, .12), pos_hint={'center_x': .5, 'center_y': y})
+            btn.bind(on_release=lambda x, m=mode: self.start(m))
+            l.add_widget(btn)
+        self.add_widget(l)
+
+    def start(self, mode):
+        set_current_mode(mode)
+        app = App.get_running_app()
+        app.current_level = 1
+        app.is_restarting = False
+        app.load_slot = 'last'
+        self.manager.current = 'loading'
+
+
+class DoorsApp(App):
+    current_level = 1
+    pre_gen_data = None
+    is_restarting = False
+    is_muted = False
+    load_slot = 'last'
+
+    def build(self):
+        global SAVE_DIR
+        try:
+            SAVE_DIR = self.user_data_dir
+            os.makedirs(SAVE_DIR, exist_ok=True)
+        except Exception:
+            SAVE_DIR = os.path.dirname(os.path.abspath(__file__))
+            try:
+                os.makedirs(SAVE_DIR, exist_ok=True)
+            except OSError:
+                pass
+
+        sm = ScreenManager()
+        for s, n in [(MenuScreen, 'menu'), (LoadingScreen, 'loading'), (GameScreen, 'game')]:
+            sm.add_widget(s(name=n))
+        return sm
+
+
+if __name__ == '__main__':
+    DoorsApp().run()
