@@ -917,6 +917,10 @@ class GameWorldBase(Widget):
             self.cached_btn_dist = min_btn if min_btn != 9999 else None
 
     def get_enemy_los(self, en, enemy_positions):
+        """Луч взгляда врага.
+        - Не включает собственную клетку врага.
+        - Не включает клетку с другим врагом — луч на ней обрывается.
+        """
         visible = set()
         ex, ey = en['current_cell']
         edir = en['dir']
@@ -932,8 +936,8 @@ class GameWorldBase(Widget):
             key = (a, b) if a < b else (b, a)
             if key in self.doors: break
             cx, cy = nx, ny
-            visible.add((cx, cy))
             if (cx, cy) in enemy_positions: break
+            visible.add((cx, cy))
         return visible
 
     def _check_hatch_open(self, app):
@@ -1005,6 +1009,7 @@ class GameWorldBase(Widget):
         return x
 
     def enemy_tick(self):
+        # 1. Сдвигаем врагов в клетки, куда они уже доехали.
         for en in self.enemies:
             en['current_cell'] = en['next_cell']
             en['grid'] = Vector(*en['current_cell'])
@@ -1012,14 +1017,34 @@ class GameWorldBase(Widget):
         app = App.get_running_app()
         enemy_positions = {en['current_cell'] for en in self.enemies}
 
+        # 2. Определяем намерения на следующий ход.
+        intents = self._resolve_enemy_intents()
+
+        # 3. Обновляем направление и пересчитываем видимость.
+        # [VISION] Враг, только что повернувший, СРАЗУ видит в новом
+        # направлении — без ожидания следующего тика. Вставший враг
+        # (dir == VEC_ZERO) даёт пустой set — он никого не видит.
+        # Это единственная проверка LOS на врага за тик — без новых затрат.
         union_vis = set()
         for en in self.enemies:
+            tgt = intents.get(en['idx'])
+            if tgt is None or tgt == en['current_cell']:
+                en['dir'] = VEC_ZERO
+                en['next_cell'] = en['current_cell']
+            else:
+                new_dir = Vector(tgt[0] - en['current_cell'][0],
+                                 tgt[1] - en['current_cell'][1])
+                en['dir'] = new_dir
+                en['last_dir'] = new_dir
+                en['next_cell'] = tgt
+
             en['visible_cells'] = self.get_enemy_los(en, enemy_positions)
             union_vis |= en['visible_cells']
+
         self.union_visible_cells = union_vis
 
-        # [VISION-FIX] Проверка обнаружения на тике — только если игрок
-        # целиком стоит на одной клетке (не между клеток).
+        # 4. Проверка обнаружения на тике — только если игрок целиком
+        #    стоит на одной клетке.
         self.last_p_cells = self.get_occupied_cells(self.p_pixel)
         if len(self.last_p_cells) == 1:
             cell = next(iter(self.last_p_cells))
@@ -1028,19 +1053,6 @@ class GameWorldBase(Widget):
                 if self.snd_lose and not app.is_muted: self.snd_lose.play()
                 app.root.get_screen('game').show_overlay('lose')
                 return
-
-        intents = self._resolve_enemy_intents()
-
-        for en in self.enemies:
-            tgt = intents.get(en['idx'])
-            if tgt is None or tgt == en['current_cell']:
-                en['dir'] = VEC_ZERO
-                en['next_cell'] = en['current_cell']
-            else:
-                d = Vector(tgt[0] - en['current_cell'][0], tgt[1] - en['current_cell'][1])
-                en['dir'] = d
-                en['last_dir'] = d
-                en['next_cell'] = tgt
 
         self.enemy_tick_counter += 1
 
@@ -1059,9 +1071,6 @@ class GameWorldBase(Widget):
             just_colored = False
             self.last_p_cells = self.get_occupied_cells(self.p_pixel)
 
-            # [VISION-FIX] Обнаружение срабатывает только когда игрок
-            # целиком стоит на одной клетке. Если между клеток — уязвим
-            # только для касания, но не для зрения.
             if len(self.last_p_cells) == 1:
                 cell = next(iter(self.last_p_cells))
                 if cell in self.union_visible_cells:
@@ -2394,7 +2403,7 @@ class DoorsApp(App):
 
         sm = ScreenManager()
         for s, n in [(MenuScreen, 'menu'), (LoadingScreen, 'loading'), (GameScreen, 'game')]:
-            sm.add_widget(s(n)) if False else sm.add_widget(s(name=n))
+            sm.add_widget(s(name=n))
         return sm
 
 
