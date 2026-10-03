@@ -509,30 +509,47 @@ class GameWorldBase(Widget):
         self.snd_checkpoint = SoundLoader.load(SND_CHECKPOINT_PATH)
 
     def _init_checkpoint_label(self):
-        self.checkpoint_label = Label(
-            text='Checkpoint',
-            font_size='48sp',
-            color=(0, 1, 0.5, 1),
-            bold=True,
-            size_hint=(None, None),
-        )
-        self.checkpoint_label.texture_update()
-        self.checkpoint_label.size = self.checkpoint_label.texture_size
-        self.checkpoint_label.opacity = 0
-        self.add_widget(self.checkpoint_label)
+        # [FIX] Надпись теперь рисуется через canvas-инструкции, как HUD.
+        # Виджет-Label не отображался — заменено на надёжный способ.
+        tex = get_text_texture('Checkpoint', 56)
+        self._checkpoint_size = tex.size
+        self.checkpoint_group = InstructionGroup()
+        self.checkpoint_bg_color = Color(0, 0, 0, 0)
+        self.checkpoint_bg_rect = Rectangle(pos=(-1000, -1000),
+                                            size=(tex.size[0] + 40, tex.size[1] + 40))
+        self.checkpoint_color = Color(0, 1, 0.5, 0)
+        self.checkpoint_rect = Rectangle(texture=tex, pos=(-1000, -1000), size=tex.size)
+        self.checkpoint_group.add(self.checkpoint_bg_color)
+        self.checkpoint_group.add(self.checkpoint_bg_rect)
+        self.checkpoint_group.add(self.checkpoint_color)
+        self.checkpoint_group.add(self.checkpoint_rect)
+        self.canvas.add(self.checkpoint_group)
 
     def _flash_checkpoint(self):
-        if not hasattr(self, 'checkpoint_label'):
+        if not hasattr(self, 'checkpoint_rect'):
             return
         m_top = getattr(self, 'maze_top', self.height * 0.8)
         m_bot = getattr(self, 'maze_bottom', self.height * 0.3)
-        self.checkpoint_label.center = (self.width / 2.0, (m_top + m_bot) / 2.0)
-        self.checkpoint_label.opacity = 1
-        Animation.cancel_all(self.checkpoint_label, 'opacity')
-        # держим 1.2 сек полностью видимой, затем плавно гасим за 0.9 сек
-        anim = (Animation(opacity=1.0, duration=1.2) +
-                Animation(opacity=0.0, duration=0.9, t='in_quad'))
-        anim.start(self.checkpoint_label)
+        tw, th = self._checkpoint_size
+        pad = 20
+        cx = (self.width - tw) / 2.0
+        cy = (m_top + m_bot) / 2.0 - th / 2.0
+        self.checkpoint_bg_rect.pos = (cx - pad, cy - pad)
+        self.checkpoint_bg_rect.size = (tw + pad * 2, th + pad * 2)
+        self.checkpoint_rect.pos = (cx, cy)
+        # отменяем предыдущие анимации
+        Animation.cancel_all(self.checkpoint_bg_color, 'a')
+        Animation.cancel_all(self.checkpoint_color, 'a')
+        # стартовые значения
+        self.checkpoint_bg_color.a = 0.7
+        self.checkpoint_color.a = 1.0
+        # держим 1.2с, затем гасим за 0.9с
+        bg_anim = (Animation(a=0.7, duration=1.2) +
+                   Animation(a=0.0, duration=0.9, t='in_quad'))
+        txt_anim = (Animation(a=1.0, duration=1.2) +
+                    Animation(a=0.0, duration=0.9, t='in_quad'))
+        bg_anim.start(self.checkpoint_bg_color)
+        txt_anim.start(self.checkpoint_color)
 
     def _create_enemy_group(self, pattern_idx, body_color, mark_color):
         egroup = InstructionGroup()
@@ -678,11 +695,6 @@ class GameWorldBase(Widget):
                 self._loaded_from_prev = True
                 self._locked_prev_path = path
             else:
-                # [NEW] Prev нажат, но предыдущего сохранения нет.
-                # Стартуем карту с нуля, а флаг _loaded_from_prev=True
-                # говорит сохранителю: при следующем автосейве удалить
-                # старый "last" (как если бы мы загрузились из prev,
-                # которого не существовало).
                 self._loaded_from_prev = True
                 self._locked_prev_path = None
                 return None
@@ -987,13 +999,6 @@ class GameWorldBase(Widget):
             new_path = create_new_save_path()
             with open(new_path, 'wb') as f:
                 pickle.dump(state, f)
-            # [NEW] Логика двух слотов:
-            # - Загружено через Prev и Prev существует: сохраняем его
-            #   как "закреплённый", плюс новый last. Старый last удаляем.
-            # - Загружено через Prev, но Prev не было (игра с нуля из
-            #   Prev): сохраняем только новый last, старое удаляем.
-            # - Обычная загрузка Last (или без загрузки): старое last
-            #   переходит в prev, новое становится last.
             if getattr(self, '_loaded_from_prev', False):
                 keep = [new_path]
                 if getattr(self, '_locked_prev_path', None):
@@ -1276,7 +1281,6 @@ class GameWorld20(GameWorldBase):
         self.logic_steps = 0
         self.dt_step = 1.0 / 60.0
         self._init_sounds()
-        self._init_checkpoint_label()
         self.union_visible_cells = set()
 
         app = App.get_running_app()
@@ -1351,6 +1355,8 @@ class GameWorld20(GameWorldBase):
         self._build_canvas()
         self.level_group = InstructionGroup()
         self.canvas.add(self.level_group)
+        # [FIX] надпись инициализируется ПОСЛЕ canvas-групп — значит рисуется поверх
+        self._init_checkpoint_label()
         self.enemies = []
         save_data = self._load_save_data()
         self.hatch_open = False
@@ -1457,9 +1463,6 @@ class GameWorld20(GameWorldBase):
         self.draw_entities()
         self.hud_state = None
         self._update_hud_state()
-        if hasattr(self, 'checkpoint_label'):
-            self.checkpoint_label.center = (self.width / 2.0,
-                                            (self.maze_top + self.maze_bottom) / 2.0)
 
     def draw_level(self):
         self.level_group.clear()
@@ -1633,7 +1636,6 @@ class GameWorldLarge(GameWorldBase):
         self.logic_steps = 0
         self.dt_step = 1.0 / 60.0
         self._init_sounds()
-        self._init_checkpoint_label()
         self.union_visible_cells = set()
 
         app = App.get_running_app()
@@ -1706,6 +1708,8 @@ class GameWorldLarge(GameWorldBase):
         self._build_canvas()
         self.level_group = InstructionGroup()
         self.canvas.add(self.level_group)
+        # [FIX] надпись рисуется после всех canvas-групп
+        self._init_checkpoint_label()
         self.enemies = []
         save_data = self._load_save_data()
         self.hatch_open = False
@@ -1816,9 +1820,6 @@ class GameWorldLarge(GameWorldBase):
         self.draw_entities(*self.last_drawn_chunk)
         self.hud_state = None
         self._update_hud_state()
-        if hasattr(self, 'checkpoint_label'):
-            self.checkpoint_label.center = (self.width / 2.0,
-                                            (self.maze_top + self.maze_bottom) / 2.0)
 
     def draw_level(self):
         self.level_group.clear()
@@ -2348,9 +2349,6 @@ class GameScreen(Screen):
             btn_last.bind(on_release=lambda x: self.restart_from('last'))
             overlay.add_widget(lbl)
             overlay.add_widget(btn_last)
-            # [NEW] Prev показываем только если есть хотя бы одно сохранение.
-            # Если сохранений нет — Prev бессмыслен, ведь он ведёт "в начало",
-            # а мы и так в начале.
             if has_any_save():
                 btn_prev = Button(text='Prev', font_size='13sp',
                                   size_hint=(0.4, 0.06),
