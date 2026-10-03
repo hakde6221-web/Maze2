@@ -40,9 +40,6 @@ MAZE_WORLD_MIN = -WALL_THICK
 MAZE_WORLD_MAX = MAZE_W * TOTAL_STEP
 MAZE_WORLD_CX = (MAZE_WORLD_MIN + MAZE_WORLD_MAX) / 2.0
 
-# --- Раскладка экрана ---
-# [FIX] HUD_H теперь не константа, а вычисляется из ширины экрана (см. update_transforms).
-# Оставлено как fallback-значение для случаев, когда размеры виджета ещё не известны.
 HUD_H = 180
 MIN_JOY_SIZE = 80
 
@@ -143,7 +140,6 @@ def cleanup_old_saves(keep=2):
 
 
 def cleanup_except(keep_paths):
-    """[FIX] Оставляет только указанные файлы (для режима защиты 'prev')."""
     keep_set = set(keep_paths)
     for _, f in get_save_files():
         full = os.path.join(_get_save_dir(), f)
@@ -286,7 +282,6 @@ SND_PUSH_PATH   = SoundGenerator.create_noise(0.2, "push")
 SND_COLOR_PATH  = SoundGenerator.create_beep([600, 900], [0.1, 0.15], "color")
 SND_RELOAD_PATH = SoundGenerator.create_beep([300, 450, 600], [0.1, 0.1, 0.1], "reload")
 SND_TROPHY_PATH = SoundGenerator.create_beep([523, 659, 784, 1047, 1319], [0.12, 0.12, 0.12, 0.15, 0.45], "trophy")
-# [NEW] Звук автосохранения-чекпоинта — два восходящих тона.
 SND_CHECKPOINT_PATH = SoundGenerator.create_beep([523, 880], [0.09, 0.18], "checkpoint")
 
 
@@ -510,7 +505,6 @@ class GameWorldBase(Widget):
         self.snd_checkpoint = SoundLoader.load(SND_CHECKPOINT_PATH)
 
     def _init_checkpoint_label(self):
-        # [NEW] Надпись "Checkpoint", которая всплывает при автосейве и плавно гаснет.
         self.checkpoint_label = Label(
             text='Checkpoint',
             font_size='40sp',
@@ -526,7 +520,6 @@ class GameWorldBase(Widget):
     def _flash_checkpoint(self):
         if not hasattr(self, 'checkpoint_label'):
             return
-        # Позиционируем по центру области лабиринта
         m_top = getattr(self, 'maze_top', self.height * 0.8)
         m_bot = getattr(self, 'maze_bottom', self.height * 0.3)
         self.checkpoint_label.center = (self.width / 2.0, (m_top + m_bot) / 2.0)
@@ -632,7 +625,6 @@ class GameWorldBase(Widget):
             'g_pattern': pattern,
             'last_drawn_dir': (None, None),
             'is_visible': True,
-            # [NEW] Клетки, которые враг видел на момент последнего тика.
             'visible_cells': set(),
         }
 
@@ -668,7 +660,6 @@ class GameWorldBase(Widget):
         self.dynamic_group.add(self.player_group)
 
     def _load_save_data(self):
-        """[FIX] Загружает сохранение и запоминает, был ли это 'prev'."""
         app = App.get_running_app()
         slot = getattr(app, 'load_slot', 'last')
         self._loaded_from_prev = False
@@ -680,7 +671,6 @@ class GameWorldBase(Widget):
                 self._loaded_from_prev = True
                 self._locked_prev_path = path
             else:
-                # [FIX] Если нет prev — падаем на last, чтобы не начинать с нуля
                 path = get_latest_save_path()
         else:
             path = get_latest_save_path()
@@ -927,12 +917,10 @@ class GameWorldBase(Widget):
             self.cached_btn_dist = min_btn if min_btn != 9999 else None
 
     def get_enemy_los(self, en, enemy_positions):
-        """[FIX] Не включает собственную клетку врага, чтобы игрок не палился со спины."""
         visible = set()
         ex, ey = en['current_cell']
         edir = en['dir']
         if edir == VEC_ZERO: return visible
-        # НЕ добавляем (ex, ey)
         dx, dy = int(edir.x), int(edir.y)
         if dx == 0 and dy == 0: return visible
         ds = 'E' if dx == 1 else 'W' if dx == -1 else 'N' if dy == 1 else 'S'
@@ -985,10 +973,6 @@ class GameWorldBase(Widget):
             new_path = create_new_save_path()
             with open(new_path, 'wb') as f:
                 pickle.dump(state, f)
-            # [FIX] Логика двух слотов:
-            #  - Обычный режим: старый 'last' переходит в 'prev', новый становится 'last'.
-            #  - Режим "загружено из prev": старый 'last' удаляется, 'prev' остаётся
-            #    зафиксированным, новый сейв становится 'last'.
             if getattr(self, '_loaded_from_prev', False) and getattr(self, '_locked_prev_path', None):
                 cleanup_except([self._locked_prev_path, new_path])
             else:
@@ -1009,7 +993,6 @@ class GameWorldBase(Widget):
         return tex.size[0]
 
     def _draw_labeled_colored(self, label, total, counts, palette, x, y, fs):
-        """Рисует: 'Label: total (c1, c2, c3, ...)' с цветными числами."""
         w = self._draw_text(label, x, y, fs); x += w + 6
         w = self._draw_text(str(total), x, y, fs); x += w + 4
         w = self._draw_text("(", x, y, fs); x += w + 2
@@ -1029,20 +1012,22 @@ class GameWorldBase(Widget):
         app = App.get_running_app()
         enemy_positions = {en['current_cell'] for en in self.enemies}
 
-        # [FIX] Обновляем персистентный набор видимых клеток для каждого врага
-        # и одновременно собираем объединённое множество.
         union_vis = set()
         for en in self.enemies:
             en['visible_cells'] = self.get_enemy_los(en, enemy_positions)
             union_vis |= en['visible_cells']
         self.union_visible_cells = union_vis
 
-        # Проверка обнаружения "на тике" (совместимость со старым поведением)
-        if self.last_p_cells & union_vis:
-            self.active = False
-            if self.snd_lose and not app.is_muted: self.snd_lose.play()
-            app.root.get_screen('game').show_overlay('lose')
-            return
+        # [VISION-FIX] Проверка обнаружения на тике — только если игрок
+        # целиком стоит на одной клетке (не между клеток).
+        self.last_p_cells = self.get_occupied_cells(self.p_pixel)
+        if len(self.last_p_cells) == 1:
+            cell = next(iter(self.last_p_cells))
+            if cell in union_vis:
+                self.active = False
+                if self.snd_lose and not app.is_muted: self.snd_lose.play()
+                app.root.get_screen('game').show_overlay('lose')
+                return
 
         intents = self._resolve_enemy_intents()
 
@@ -1074,13 +1059,16 @@ class GameWorldBase(Widget):
             just_colored = False
             self.last_p_cells = self.get_occupied_cells(self.p_pixel)
 
-            # [FIX] Проверка обнаружения каждый под-шаг по персистентным клеткам зрения.
-            # Это закрывает "проскок" игрока мимо врага между тиками.
-            if self.last_p_cells & self.union_visible_cells:
-                self.active = False
-                if self.snd_lose and not app.is_muted: self.snd_lose.play()
-                app.root.get_screen('game').show_overlay('lose')
-                return
+            # [VISION-FIX] Обнаружение срабатывает только когда игрок
+            # целиком стоит на одной клетке. Если между клеток — уязвим
+            # только для касания, но не для зрения.
+            if len(self.last_p_cells) == 1:
+                cell = next(iter(self.last_p_cells))
+                if cell in self.union_visible_cells:
+                    self.active = False
+                    if self.snd_lose and not app.is_muted: self.snd_lose.play()
+                    app.root.get_screen('game').show_overlay('lose')
+                    return
 
             _e_prog = max(0.0, min(1.0, self.enemy_time / self.enemy_step_interval)) if self.enemy_step_interval > 0 else 1.0
             TOUCH_SQ = (CELL_SIZE * 0.85) ** 2
@@ -1117,8 +1105,6 @@ class GameWorldBase(Widget):
                         state_dirty = True
                         redraw_int = True
                         self._check_hatch_open(app)
-                        # [FIX] Автосейв каждые 5 кнопок. В момент автосейва
-                        # НЕ проигрываем звук взятия кнопки — только звук автосейва.
                         will_autosave = (len(self.touched_buttons) % 5 == 0)
                         if will_autosave:
                             self.save_game_state()
@@ -1393,24 +1379,19 @@ class GameWorld20(GameWorldBase):
         self.bind(size=self.trigger_static_redraw, pos=self.trigger_static_redraw)
         self._update_event = Clock.schedule_interval(self.update, 1 / 60.0)
 
-    # ---------- РАСКЛАДКА ----------
     def update_transforms(self):
-        """[FIX] Все размеры — относительные, без жёстких пиксельных констант."""
         sw, sh = self.width, self.height
         if sw <= 0 or sh <= 0:
             return
 
-        # Размер шрифта пропорционален ширине экрана
         f_size = max(14, int(sw / 40))
         row_h = int(f_size * 1.8)
         hud_h = row_h * 4
 
-        # Лабиринт — квадрат шириной в экран
         maze_size = sw
         maze_top = sh - hud_h
         maze_bottom = maze_top - maze_size
 
-        # Если не хватает места — уменьшаем лабиринт, оставляя место под джойстик
         if maze_bottom < MIN_JOY_SIZE:
             maze_size = max(MIN_JOY_SIZE, sh - hud_h - MIN_JOY_SIZE)
             maze_size = min(maze_size, sw)
@@ -1427,7 +1408,6 @@ class GameWorld20(GameWorldBase):
         self.maze_cx = sw / 2.0
         self.maze_center_y = maze_bottom + maze_size / 2.0
 
-        # Центрирование стесил-прямоугольника по горизонтали
         maze_left = (sw - maze_size) / 2.0
         self.stencil_rect1.pos = (maze_left, maze_bottom)
         self.stencil_rect1.size = (maze_size, maze_size)
@@ -1450,12 +1430,10 @@ class GameWorld20(GameWorldBase):
         self.draw_entities()
         self.hud_state = None
         self._update_hud_state()
-        # Перепозиционирование надписи "Checkpoint"
         if hasattr(self, 'checkpoint_label'):
             self.checkpoint_label.center = (self.width / 2.0,
                                             (self.maze_top + self.maze_bottom) / 2.0)
 
-    # ---------- ОТРИСОВКА ----------
     def draw_level(self):
         self.level_group.clear()
         if not hasattr(self, 'maze_top'): return
@@ -1558,7 +1536,6 @@ class GameWorld20(GameWorldBase):
                 en['last_drawn_dir'] = (dx, dy)
                 self._apply_enemy_rotation(en, dx, dy)
 
-    # ---------- HUD ----------
     def draw_hud(self, state):
         self.ui_group.clear()
         if not hasattr(self, 'maze_top'): return
@@ -1574,7 +1551,6 @@ class GameWorld20(GameWorldBase):
 
         r = f_size * 0.55
 
-        # --- Строка 1: [green icon] score/total | FPS n ---
         c1x = max(10, self.width * 0.05)
         r_s = min(r * 0.9, row_h * 0.4)
         self.ui_group.add(Color(*GREEN_BUTTON_COLOR))
@@ -1583,25 +1559,21 @@ class GameWorld20(GameWorldBase):
         cx_txt = c1x + r_s * 2 + 8
         w = self._draw_text(f"{state['score']}/{len(self.buttons)}", cx_txt, y1, f_size)
 
-        # FPS: текст "FPS n" вместо квадратика
         c3x = self.width * 0.72
         fps_str = f"FPS {state['fps']}"
         self._draw_text(fps_str, c3x, y1, f_size)
 
-        # --- Строка 2: Enemies: N (c1, c2, c3, c4, c5) ---
         cc = state.get('color_counts', ())
         total_enemies = sum(cc)
         x_pos = 15
         x_pos = self._draw_labeled_colored(
             "Enemies:", total_enemies, cc, self.color_palette, x_pos, y2, f_size)
 
-        # --- Строка 3: Doors: N (c1, c2, c3, c4, c5) ---
         dc = state.get('door_counts', ())
         x_pos = 15
         x_pos = self._draw_labeled_colored(
             "Doors:", state.get('num_doors', 0), dc, self.color_palette, x_pos, y3, f_size)
 
-        # --- Строка 4: Ends: N ---
         x_pos = 15
         w = self._draw_text("Ends:", x_pos, y4, f_size); x_pos += w + 6
         self._draw_text(str(self.target_de), x_pos, y4, f_size)
@@ -1762,7 +1734,6 @@ class GameWorldLarge(GameWorldBase):
         self.bind(size=self.trigger_static_redraw, pos=self.trigger_static_redraw)
         self._update_event = Clock.schedule_interval(self.update, 1 / 60.0)
 
-    # ---------- РАСКЛАДКА ----------
     def update_transforms(self):
         sw, sh = self.width, self.height
         if sw <= 0 or sh <= 0:
@@ -2010,7 +1981,6 @@ class GameWorldLarge(GameWorldBase):
         y3 = maze_top + row_h * 2.5
         y4 = maze_top + row_h * 3.5
 
-        # --- Строка 1: green icon score/total | player | enemy | dist | FPS n ---
         c1x = max(10, self.width * 0.05)
         r_s = min(r * 0.9, row_h * 0.4)
         self.ui_group.add(Color(*GREEN_BUTTON_COLOR))
@@ -2024,7 +1994,6 @@ class GameWorldLarge(GameWorldBase):
         if state.get('btn_dist') is not None:
             self._draw_text(str(state['btn_dist']), cx_txt, y1, f_size)
 
-        # Иконка игрока
         c2x = self.width * 0.42
         icon_r = min(r, row_h * 0.4)
         self.ui_group.add(Color(0, 1, 0.5))
@@ -2035,7 +2004,6 @@ class GameWorldLarge(GameWorldBase):
         self.ui_group.add(Ellipse(pos=(c2x + icon_r * 0.65, y1 + icon_r * 0.1),
                                   size=(icon_r * 0.15, icon_r * 0.15)))
         cx_t = c2x + icon_r * 2 + 6
-        # [FIX] Обрезаем scale иконки врага, чтобы не залезала на лабиринт.
         max_icon_r = row_h * 0.38
         sc = min(self.maze_scale * 0.5, max_icon_r * 2.0 / CELL_SIZE)
         if target_en:
@@ -2044,12 +2012,10 @@ class GameWorldLarge(GameWorldBase):
         val_str = f"{state['dist_val']}" if state['dist_val'] < 9999 else "-"
         self._draw_text(val_str, cx_t, y1, f_size)
 
-        # FPS: текст "FPS n"
         c3x = self.width * 0.78
         fps_str = f"FPS {state['fps']}"
         self._draw_text(fps_str, c3x, y1, f_size)
 
-        # --- Строка 2: Enemies: N (c1, c2, c3, c4, c5) ---
         cc = state.get('color_counts', ())
         dc = state.get('door_counts', ())
         total_enemies = sum(cc)
@@ -2057,12 +2023,10 @@ class GameWorldLarge(GameWorldBase):
         x_pos = self._draw_labeled_colored(
             "Enemies:", total_enemies, cc, self.color_palette, x_pos, y2, f_size)
 
-        # --- Строка 3: Doors: N (c1, c2, c3, c4, c5) ---
         x_pos = 15
         x_pos = self._draw_labeled_colored(
             "Doors:", state.get('num_doors', 0), dc, self.color_palette, x_pos, y3, f_size)
 
-        # --- Строка 4: Ends: N ---
         x_pos = 15
         w = self._draw_text("Ends:", x_pos, y4, f_size); x_pos += w + 6
         self._draw_text(str(self.target_de), x_pos, y4, f_size)
@@ -2115,30 +2079,24 @@ class MazeJoystick(Widget):
     def redraw(self, *args):
         self.canvas.clear()
         cx, cy = self.x + self.width / 2.0, self.y + self.height / 2.0
-        # [FIX] Внешний радиус = половина меньшей стороны, чтобы рамка НЕ вылезала за виджет.
         max_r = min(self.width, self.height) / 2.0
         if max_r <= 0: return
-        ot = max(4, max_r * 0.05)  # толщина рамки
-        r = max_r - ot / 2.0        # внутренний радиус так, чтобы рамка легла ровно до max_r
+        ot = max(4, max_r * 0.05)
+        r = max_r - ot / 2.0
         with self.canvas:
-            # Внешнее кольцо (WALL_COLOR)
             Color(*WALL_COLOR)
             Ellipse(pos=(cx - r - ot / 2, cy - r - ot / 2), size=(r * 2 + ot, r * 2 + ot))
-            # Тёмный диск
             Color(0.15, 0.15, 0.15)
             Ellipse(pos=(cx - r, cy - r), size=(r * 2, r * 2))
-            # Секторы
             for i, s in enumerate(self.sectors):
                 Color(*(0, 1, 1, 1) if i == self.active_sector else (0.25, 0.25, 0.25, 1))
                 Ellipse(pos=(cx - r * 0.95, cy - r * 0.95), size=(r * 1.9, r * 1.9),
                         angle_start=s['s'], angle_end=s['e'])
-            # Разделители
             Color(*WALL_COLOR)
             for angle in (45, 135):
                 rad = math.radians(angle)
                 dx, dy = math.cos(rad) * r * 0.95, math.sin(rad) * r * 0.95
                 Line(points=[cx - dx, cy - dy, cx + dx, cy + dy], width=max(2, ot / 2))
-            # Центральный кружок
             Color(0.1, 0.1, 0.1)
             Ellipse(pos=(cx - r * 0.2, cy - r * 0.2), size=(r * 0.4, r * 0.4))
 
@@ -2307,7 +2265,6 @@ class GameScreen(Screen):
         if sw <= 0 or sh <= 0:
             return
 
-        # [FIX] HUD_H вычисляется так же, как в update_transforms виджета
         f_size = max(14, int(sw / 40))
         row_h = int(f_size * 1.8)
         hud_h = row_h * 4
@@ -2323,7 +2280,6 @@ class GameScreen(Screen):
 
         avail_h = max(0, maze_bottom)
 
-        # [FIX] Джойстик: квадрат, вписанный в нижнюю область, БЕЗ вылезания за экран.
         joy_size = min(sw, avail_h)
         if joy_size < MIN_JOY_SIZE:
             joy_size = min(MIN_JOY_SIZE, max(avail_h, MIN_JOY_SIZE))
@@ -2438,7 +2394,7 @@ class DoorsApp(App):
 
         sm = ScreenManager()
         for s, n in [(MenuScreen, 'menu'), (LoadingScreen, 'loading'), (GameScreen, 'game')]:
-            sm.add_widget(s(name=n))
+            sm.add_widget(s(n)) if False else sm.add_widget(s(name=n))
         return sm
 
 
