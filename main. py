@@ -122,6 +122,10 @@ def get_second_latest_save_path():
     return os.path.join(_get_save_dir(), files[-2][1])
 
 
+def has_any_save():
+    return len(get_save_files()) > 0
+
+
 def create_new_save_path():
     files = get_save_files()
     next_num = (files[-1][0] + 1) if files else 1
@@ -507,7 +511,7 @@ class GameWorldBase(Widget):
     def _init_checkpoint_label(self):
         self.checkpoint_label = Label(
             text='Checkpoint',
-            font_size='40sp',
+            font_size='48sp',
             color=(0, 1, 0.5, 1),
             bold=True,
             size_hint=(None, None),
@@ -525,7 +529,10 @@ class GameWorldBase(Widget):
         self.checkpoint_label.center = (self.width / 2.0, (m_top + m_bot) / 2.0)
         self.checkpoint_label.opacity = 1
         Animation.cancel_all(self.checkpoint_label, 'opacity')
-        Animation(opacity=0, duration=0.9, t='in_quad').start(self.checkpoint_label)
+        # держим 1.2 сек полностью видимой, затем плавно гасим за 0.9 сек
+        anim = (Animation(opacity=1.0, duration=1.2) +
+                Animation(opacity=0.0, duration=0.9, t='in_quad'))
+        anim.start(self.checkpoint_label)
 
     def _create_enemy_group(self, pattern_idx, body_color, mark_color):
         egroup = InstructionGroup()
@@ -671,7 +678,14 @@ class GameWorldBase(Widget):
                 self._loaded_from_prev = True
                 self._locked_prev_path = path
             else:
-                path = get_latest_save_path()
+                # [NEW] Prev нажат, но предыдущего сохранения нет.
+                # Стартуем карту с нуля, а флаг _loaded_from_prev=True
+                # говорит сохранителю: при следующем автосейве удалить
+                # старый "last" (как если бы мы загрузились из prev,
+                # которого не существовало).
+                self._loaded_from_prev = True
+                self._locked_prev_path = None
+                return None
         else:
             path = get_latest_save_path()
         if not path:
@@ -973,8 +987,18 @@ class GameWorldBase(Widget):
             new_path = create_new_save_path()
             with open(new_path, 'wb') as f:
                 pickle.dump(state, f)
-            if getattr(self, '_loaded_from_prev', False) and getattr(self, '_locked_prev_path', None):
-                cleanup_except([self._locked_prev_path, new_path])
+            # [NEW] Логика двух слотов:
+            # - Загружено через Prev и Prev существует: сохраняем его
+            #   как "закреплённый", плюс новый last. Старый last удаляем.
+            # - Загружено через Prev, но Prev не было (игра с нуля из
+            #   Prev): сохраняем только новый last, старое удаляем.
+            # - Обычная загрузка Last (или без загрузки): старое last
+            #   переходит в prev, новое становится last.
+            if getattr(self, '_loaded_from_prev', False):
+                keep = [new_path]
+                if getattr(self, '_locked_prev_path', None):
+                    keep.append(self._locked_prev_path)
+                cleanup_except(keep)
             else:
                 cleanup_old_saves(keep=2)
         except Exception:
@@ -1190,8 +1214,6 @@ class GameWorldBase(Widget):
             self.enemy_tick()
             ticked = True
             if not self.active:
-                # [FIX-VISUAL] Финальный рендер врагов — чтобы игрок увидел
-                # их уже стоящими в новой клетке и развёрнутыми в его сторону.
                 gx2 = int(self.player_grid.x)
                 gy2 = int(self.player_grid.y)
                 if self.IS_LARGE:
@@ -2323,14 +2345,18 @@ class GameScreen(Screen):
             btn_last = Button(text='Last', font_size='22sp',
                               size_hint=(1.0, 0.15),
                               pos_hint={'center_x': 0.5, 'y': 0.12})
-            btn_prev = Button(text='Prev', font_size='13sp',
-                              size_hint=(0.4, 0.06),
-                              pos_hint={'center_x': 0.5, 'y': 0.02})
-            btn_prev.bind(on_release=lambda x: self.restart_from('pre_last'))
             btn_last.bind(on_release=lambda x: self.restart_from('last'))
             overlay.add_widget(lbl)
             overlay.add_widget(btn_last)
-            overlay.add_widget(btn_prev)
+            # [NEW] Prev показываем только если есть хотя бы одно сохранение.
+            # Если сохранений нет — Prev бессмыслен, ведь он ведёт "в начало",
+            # а мы и так в начале.
+            if has_any_save():
+                btn_prev = Button(text='Prev', font_size='13sp',
+                                  size_hint=(0.4, 0.06),
+                                  pos_hint={'center_x': 0.5, 'y': 0.02})
+                btn_prev.bind(on_release=lambda x: self.restart_from('pre_last'))
+                overlay.add_widget(btn_prev)
         self.f.add_widget(overlay)
 
     def next_lvl(self):
