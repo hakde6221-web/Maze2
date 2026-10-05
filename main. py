@@ -1059,8 +1059,6 @@ class GameWorldBase(Widget):
             for en in self.enemies:
                 if id(en) in was_sleeping:
                     continue
-                if not en.get('_just_moved', False):
-                    continue
                 if en['current_cell'] not in self.dead_ends_set:
                     continue
                 if en['idx'] not in self.sleep_cycle_set:
