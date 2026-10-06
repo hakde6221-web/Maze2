@@ -22,6 +22,8 @@ android.ndk = 25b
 android.archs = arm64-v8a
 android.allow_backup = True
 android.accept_sdk_license = True
+android.enable_androidx = True
+android.private_storage = True
 
 android.logcat_filters = *:S python:D
 
