@@ -32,6 +32,14 @@ jobs:
           echo "=== After ==="
           ls -la main.py
 
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y git zip unzip autoconf libtool pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev \
+            cmake libffi-dev libssl-dev \
+            libfreetype6-dev libpng-dev liblzma-dev
+
       - name: Generate Keystore
         run: |
           keytool -genkey -v -keystore mykey.keystore -alias mykey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Maze, OU=Dev, O=Indie, L=City, S=State, C=RU"
