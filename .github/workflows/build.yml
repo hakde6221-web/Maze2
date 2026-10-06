@@ -1,4 +1,4 @@
-name: Build APK
+name: Build Release APK
 on: [push, workflow_dispatch]
 
 jobs:
@@ -14,18 +14,15 @@ jobs:
         run: |
           echo "=== Before ==="
           ls -la
-          echo "=== Rename any main* to pure main.py ==="
           shopt -s nullglob
           for f in main*; do
             if [ -f "$f" ] && [ "$f" != "main.py" ]; then
-              echo "Renaming [$f] -> main.py"
               mv -- "$f" main.py
             fi
           done
           if [ ! -f "main.py" ]; then
             for f in *main*; do
               if [ -f "$f" ]; then
-                echo "Fallback rename [$f] -> main.py"
                 mv -- "$f" main.py
                 break
               fi
@@ -33,7 +30,6 @@ jobs:
           fi
           echo "=== After ==="
           ls -la main.py
-          file main.py
 
       - uses: actions/setup-python@v5
         with:
@@ -49,7 +45,26 @@ jobs:
           sudo apt update
           sudo apt install -y git zip unzip autoconf libtool pkg-config \
             zlib1g-dev libncurses5-dev libncursesw5-dev \
-            cmake libffi-dev libssl-dev
+            cmake libffi-dev libssl-dev wget
+
+      - name: Download Android NDK from Tencent Mirror
+        run: |
+          mkdir -p /usr/local/lib/android/sdk/ndk/25.2.9519653
+          cd /tmp
+          wget -q https://mirrors.cloud.tencent.com/AndroidSDK/android-ndk-r25b-linux.zip -O ndk.zip
+          unzip -q ndk.zip
+          mv android-ndk-r25b/* /usr/local/lib/android/sdk/ndk/25.2.9519653/
+
+      - name: Generate Keystore
+        run: |
+          keytool -genkey -v -keystore mykey.keystore -alias mykey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Maze, OU=Dev, O=Indie, L=City, S=State, C=RU"
+
+      - name: Patch buildozer.spec
+        run: |
+          grep -q "android.release_keystore" buildozer.spec || echo "android.release_keystore = mykey.keystore" >> buildozer.spec
+          grep -q "android.release_keystore_password" buildozer.spec || echo "android.release_keystore_password = android" >> buildozer.spec
+          grep -q "android.release_keystore_alias" buildozer.spec || echo "android.release_keystore_alias = mykey" >> buildozer.spec
+          grep -q "android.release_keystore_alias_password" buildozer.spec || echo "android.release_keystore_alias_password = android" >> buildozer.spec
 
       - name: Install buildozer
         run: |
@@ -75,7 +90,6 @@ jobs:
           d.ellipse([ex1-r, ey-r, ex1+r, ey+r], fill=(0,0,0,255))
           d.ellipse([ex2-r, ey-r, ex2+r, ey+r], fill=(0,0,0,255))
           img.save('icon.png')
-          print('icon.png created')
           "
 
       - name: Pre-accept Android SDK licenses
@@ -86,7 +100,7 @@ jobs:
 
       - name: Build APK
         run: |
-          buildozer -v android debug > buildozer.log 2>&1 || (sleep 30 && buildozer -v android debug > buildozer.log 2>&1)
+          buildozer -v android release > buildozer.log 2>&1
 
       - name: Show last 200 lines
         if: always()
@@ -96,11 +110,11 @@ jobs:
         if: always()
         run: |
           mkdir -p final_apk
-          cp bin/*.apk final_apk/maze.apk || true
+          cp bin/*.apk final_apk/maze-release.apk || true
 
       - name: Upload APK
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: package
-          path: final_apk/maze.apk
+          path: final_apk/maze-release.apk
