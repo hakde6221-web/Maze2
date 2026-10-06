@@ -4,6 +4,9 @@ on: [push, workflow_dispatch]
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     steps:
       - uses: actions/checkout@v4
 
@@ -83,7 +86,7 @@ jobs:
 
       - name: Build APK
         run: |
-          buildozer -v android debug > buildozer.log 2>&1
+          buildozer -v android debug > buildozer.log 2>&1 || (sleep 30 && buildozer -v android debug > buildozer.log 2>&1)
 
       - name: Show last 200 lines
         if: always()
