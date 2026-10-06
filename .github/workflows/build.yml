@@ -11,6 +11,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Fix main.py filename
+        shell: bash
         run: |
           echo "=== Before ==="
           ls -la
