@@ -22,8 +22,6 @@ android.ndk = 25b
 android.archs = arm64-v8a
 android.allow_backup = True
 android.accept_sdk_license = True
-android.enable_androidx = True
-android.private_storage = True
 
 android.logcat_filters = *:S python:D
 
@@ -32,4 +30,4 @@ icon.filename = %(source.dir)s/icon.png
 [buildozer]
 
 log_level = 2
-warn_on_root = 0
+warn_on_root = 1
