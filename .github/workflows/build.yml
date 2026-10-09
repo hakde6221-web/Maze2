@@ -43,6 +43,11 @@ jobs:
           grep -q "android.release_keystore_alias" buildozer.spec || echo "android.release_keystore_alias = mykey" >> buildozer.spec
           grep -q "android.release_keystore_alias_password" buildozer.spec || echo "android.release_keystore_alias_password = android" >> buildozer.spec
 
+      # ЭТОТ БЛОК МЫ ДОБАВИЛИ
+      - name: Update buildozer
+        run: |
+          pip install --upgrade buildozer cython==0.29.34 pillow
+
       - name: Build APK
         run: |
           buildozer -v android release > buildozer.log 2>&1
