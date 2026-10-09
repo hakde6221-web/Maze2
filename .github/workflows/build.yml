@@ -96,15 +96,15 @@ jobs:
         if: always()
         run: tail -n 200 buildozer.log
 
-      - name: Rename APK
+      - name: Prepare artifact
         if: always()
         run: |
-          mkdir -p final_apk
-          cp bin/*.apk final_apk/maze-release.apk || true
+          mkdir -p final_artifact
+          cp bin/*.aab final_artifact/maze-release.aab || cp bin/*.apk final_artifact/maze-release.apk || true
 
-      - name: Upload APK
+      - name: Upload Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: package
-          path: final_apk/maze-release.apk
+          path: final_artifact/
