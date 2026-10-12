@@ -1,7 +1,7 @@
 [app]
 
 title = Maze
-package.name = maze2new
+package.name = maze2final
 package.domain = org.maze
 
 source.dir = .
