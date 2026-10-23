@@ -624,7 +624,7 @@ class SoundGenerator:
 
 SND_LOSE_PATH   = SoundGenerator.create_beep([300, 200], [0.3, 0.5], "lose")
 SND_STOP_PATH   = SoundGenerator.create_beep([300], [0.05], "stop")
-SND_JOY_PATH    = SoundGenerator.create_beep([400], [0.05], "joy")
+SND_JOY_PATH    = SoundGenerator.create_beep([200], [0.01], "joy")
 SND_HATCH_PATH  = SoundGenerator.create_beep([400, 600, 800, 1200], [0.1, 0.1, 0.1, 0.3], "hatch")
 SND_PUSH_PATH   = SoundGenerator.create_noise(0.2, "push")
 SND_RELOAD_PATH = SoundGenerator.create_beep([300, 450, 600], [0.1, 0.1, 0.1], "reload")
