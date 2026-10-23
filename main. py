@@ -538,7 +538,7 @@ def _place_doors_no_corridor_check(maze_data, dead_ends_set, num_colors=5):
 class SoundGenerator:
     @staticmethod
     def create_beep(freqs, durations, name):
-        fname = os.path.join(tempfile.gettempdir(), f"sys_{name}.wav")
+        fname = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"sys_{name}.wav")
         try:
             if os.path.exists(fname) and os.path.getsize(fname) > 0:
                 return fname
@@ -565,7 +565,7 @@ class SoundGenerator:
 
     @staticmethod
     def create_noise(duration, name):
-        fname = os.path.join(tempfile.gettempdir(), f"sys_{name}.wav")
+        fname = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"sys_{name}.wav")
         try:
             if os.path.exists(fname) and os.path.getsize(fname) > 0:
                 return fname
@@ -588,10 +588,43 @@ class SoundGenerator:
         except Exception:
             return None
 
+    @staticmethod
+    def create_truncated(source_fname, name, fraction=0.5):
+        fname = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"sys_{name}.wav")
+        try:
+            if os.path.exists(fname) and os.path.getsize(fname) > 0:
+                return fname
+        except OSError:
+            pass
+        if not source_fname or not os.path.exists(source_fname):
+            return None
+        try:
+            with wave.open(source_fname, 'rb') as src:
+                nchannels = src.getnchannels()
+                sampwidth = src.getsampwidth()
+                framerate = src.getframerate()
+                frames = src.readframes(src.getnframes())
+            frame_size = max(1, sampwidth * nchannels)
+            cut = int(len(frames) * fraction)
+            cut -= cut % frame_size
+            if cut <= 0:
+                return None
+            buf = io.BytesIO()
+            with wave.open(buf, 'wb') as dst:
+                dst.setnchannels(nchannels)
+                dst.setsampwidth(sampwidth)
+                dst.setframerate(framerate)
+                dst.writeframes(frames[:cut])
+            with open(fname, 'wb') as f:
+                f.write(buf.getvalue())
+            return fname
+        except Exception:
+            return None
+
 
 SND_LOSE_PATH   = SoundGenerator.create_beep([300, 200], [0.3, 0.5], "lose")
-SND_STOP_PATH   = SoundGenerator.create_beep([400], [0.1], "stop")
-SND_JOY_PATH    = SoundGenerator.create_beep([800, 1200], [0.1, 0.15], "joy")
+SND_STOP_PATH   = SoundGenerator.create_beep([300], [0.05], "stop")
+SND_JOY_PATH    = SoundGenerator.create_beep([400], [0.05], "joy")
 SND_HATCH_PATH  = SoundGenerator.create_beep([400, 600, 800, 1200], [0.1, 0.1, 0.1, 0.3], "hatch")
 SND_PUSH_PATH   = SoundGenerator.create_noise(0.2, "push")
 SND_RELOAD_PATH = SoundGenerator.create_beep([300, 450, 600], [0.1, 0.1, 0.1], "reload")
@@ -600,6 +633,29 @@ SND_CHECKPOINT_PATH = SoundGenerator.create_beep([523, 880], [0.09, 0.18], "chec
 SND_PICKUP_PATH = SoundGenerator.create_beep(
     [523.25, 659.25, 783.99, 1046.50, 783.99, 1046.50],
     [0.09, 0.09, 0.09, 0.20, 0.09, 0.40], "pickup")
+
+SND_VICTORY_PATH = SoundGenerator.create_beep(
+    [523.25, 523.25, 523.25, 659.25, 783.99, 1046.50],
+    [0.20, 0.20, 0.20, 0.30, 0.60, 1.50], "victory")
+
+_ENEMY_DROP_SPECS = [
+    ([440, 330],              [0.1, 0.1], "enemy_drop_0v2"),   # красный:  низкий нисходящий
+    ([523, 659],              [0.1, 0.1], "enemy_drop_1v2"),   # зелёный:  средний восходящий
+    ([880, 660],              [0.1, 0.1], "enemy_drop_2v2"),   # жёлтый:   высокий нисходящий
+    ([392, 466],              [0.1, 0.1], "enemy_drop_3v2"),   # голубой:  низкий восходящий (малая терция)
+    ([1760, 1319],            [0.1, 0.1], "enemy_drop_4v2"),   # белый:    очень высокий нисходящий
+]
+
+_ENEMY_PICKUP_SPECS = [
+    ([440, 330, 262, 196],    [0.1, 0.1, 0.1, 0.1], "enemy_pickup_0v2"),  # красный:  полный низкий спуск
+    ([523, 659, 784, 1047],   [0.1, 0.1, 0.1, 0.1], "enemy_pickup_1v2"),  # зелёный:  полное мажорное восхождение
+    ([880, 660, 880, 660],    [0.1, 0.1, 0.1, 0.1], "enemy_pickup_2v2"),  # жёлтый:   трель (высокий ↔ средний)
+    ([392, 466, 392, 466],    [0.1, 0.1, 0.1, 0.1], "enemy_pickup_3v2"),  # голубой:  трель (низкий ↔ средний, малая терция)
+    ([1760, 1319, 1047, 784], [0.1, 0.1, 0.1, 0.1], "enemy_pickup_4v2"),  # белый:    полный очень высокий спуск
+]
+
+SND_ENEMY_DROP_PATHS = [SoundGenerator.create_beep(f, d, n) for f, d, n in _ENEMY_DROP_SPECS]
+SND_ENEMY_PICKUP_PATHS = [SoundGenerator.create_beep(f, d, n) for f, d, n in _ENEMY_PICKUP_SPECS]
 
 
 class MazeGeneratorBase:
@@ -727,8 +783,6 @@ DOT_SIZE = 6
 
 
 def _round_hud_dist(d):
-    """Округление отображаемых расстояний в HUD (визуально неотличимо,
-    но резко снижает частоту перестроек панели)."""
     if d is None or d >= 9999:
         return d
     if d <= 4:
@@ -762,6 +816,9 @@ class GameWorldBase(Widget):
         self.snd_trophy = SoundLoader.load(SND_TROPHY_PATH)
         self.snd_checkpoint = SoundLoader.load(SND_CHECKPOINT_PATH)
         self.snd_pickup = SoundLoader.load(SND_PICKUP_PATH)
+        self.snd_victory = SoundLoader.load(SND_VICTORY_PATH)
+        self.snd_enemy_drop = [SoundLoader.load(p) if p else None for p in SND_ENEMY_DROP_PATHS]
+        self.snd_enemy_pickup = [SoundLoader.load(p) if p else None for p in SND_ENEMY_PICKUP_PATHS]
 
     def _init_checkpoint_label(self):
         tex = get_text_texture('Checkpoint', 56)
@@ -807,6 +864,8 @@ class GameWorldBase(Widget):
         egroup.add(mark_color_inst)
         emark = Line(circle=(0, 0, 18, 0, 0), width=2)
         egroup.add(emark)
+        star_group = InstructionGroup()
+        egroup.add(star_group)
         pattern = DOT_PATTERNS[pattern_idx] if 0 <= pattern_idx < len(DOT_PATTERNS) else []
         edots = []
         edot_colors = []
@@ -819,8 +878,31 @@ class GameWorldBase(Widget):
             edot_colors.append(dcol)
         egroup.add(PopMatrix())
         self.dynamic_group.add(egroup)
-        return (egroup, translate, emark, edots, pattern,
+        return (egroup, translate, emark, star_group, edots, pattern,
                 body_color_inst, mark_color_inst, edot_colors)
+
+    def _apply_star_rotation(self, en, dx, dy):
+        tris = en.get('g_star_triangles')
+        if not tris:
+            return
+        local = en.get('g_star_local')
+        if not local:
+            return
+        for tri, pts in zip(tris, local):
+            rotated = []
+            for px, py in pts:
+                if dx == 0 and dy == 1:
+                    rx, ry = px, py
+                elif dx == 1 and dy == 0:
+                    rx, ry = py, -px
+                elif dx == 0 and dy == -1:
+                    rx, ry = -px, -py
+                elif dx == -1 and dy == 0:
+                    rx, ry = -py, px
+                else:
+                    rx, ry = px, py
+                rotated.extend((rx, ry))
+            tri.points = rotated
 
     def _apply_enemy_rotation(self, en, dx, dy):
         if   dx == 0 and dy == 1:   fa = 0
@@ -842,6 +924,7 @@ class GameWorldBase(Widget):
             elif dx == -1 and dy == 0: rx, ry = -py, px
             else:                      rx, ry = px, py
             dots[i].pos = (rx - DOT_RAD, ry - DOT_RAD)
+        self._apply_star_rotation(en, dx, dy)
 
     def _update_sleep_visual(self, en):
         sleeping = en.get('sleep_counter', 0) > 0
@@ -851,22 +934,61 @@ class GameWorldBase(Widget):
         for dc in en.get('g_dot_colors', ()):
             dc.a = alpha
 
-    def _update_carrier_visual(self, en):
-        if en.get('is_carrier', False):
-            cid = en.get('color_id', 0)
-            dc = self.color_palette[cid] if 0 <= cid < len(self.color_palette) else WALL_COLOR
-            en['body_color_inst'].rgba = (dc[0], dc[1], dc[2], 1)
-            en['mark_color_inst'].rgba = (0, 0, 0, 1)
-            en['color'] = dc
-            en['mark_color'] = (0, 0, 0)
+    def _update_carrier_star_visual(self, en):
+        group = en.get('g_star_group')
+        if group is None:
+            return
+        if not en.get('is_carrier', False):
+            group.clear()
+            en['g_star_triangles'] = []
+            en['g_star_local'] = []
+            en['g_star_color'] = None
+            return
+        cid = en.get('color_id', 0)
+        mc = self.color_palette[cid] if (self.color_palette and 0 <= cid < len(self.color_palette)) else (1, 0, 0)
+        cycle_set = getattr(self, 'sleep_cycle_set', None)
+        alpha = 0.4 if (cycle_set is not None and en['idx'] in cycle_set) else 1.0
+        if not en.get('g_star_triangles'):
+            group.clear()
+            outer_r = (CELL_SIZE - 4) / 2.0
+            inner_r = outer_r * 0.382
+            verts = []
+            for i in range(10):
+                angle = math.pi / 2 + i * math.pi / 5
+                r = outer_r if i % 2 == 0 else inner_r
+                verts.append((r * math.cos(angle), r * math.sin(angle)))
+            color_inst = Color(mc[0], mc[1], mc[2], alpha)
+            group.add(color_inst)
+            tris = []
+            local = []
+            for i in range(10):
+                x1, y1 = verts[i]
+                x2, y2 = verts[(i + 1) % 10]
+                tri = Triangle(points=[0, 0, x1, y1, x2, y2])
+                group.add(tri)
+                tris.append(tri)
+                local.append([(0, 0), (x1, y1), (x2, y2)])
+            en['g_star_color'] = color_inst
+            en['g_star_triangles'] = tris
+            en['g_star_local'] = local
+            dx, dy = en['dir'].x, en['dir'].y
+            if dx == 0 and dy == 0:
+                dx, dy = en['last_dir'].x, en['last_dir'].y
+            self._apply_star_rotation(en, dx, dy)
         else:
-            en['body_color_inst'].rgba = (WALL_COLOR[0], WALL_COLOR[1], WALL_COLOR[2], 1)
-            cid = en.get('color_id', 0)
-            mc = self.color_palette[cid] if 0 <= cid < len(self.color_palette) else (1, 0, 0)
-            en['mark_color_inst'].rgba = (mc[0], mc[1], mc[2], 1)
-            en['color'] = WALL_COLOR
-            en['mark_color'] = mc
+            color_inst = en.get('g_star_color')
+            if color_inst is not None:
+                color_inst.rgba = (mc[0], mc[1], mc[2], alpha)
+
+    def _update_carrier_visual(self, en):
+        en['body_color_inst'].rgba = (WALL_COLOR[0], WALL_COLOR[1], WALL_COLOR[2], 1)
+        cid = en.get('color_id', 0)
+        mc = self.color_palette[cid] if (self.color_palette and 0 <= cid < len(self.color_palette)) else (1, 0, 0)
+        en['mark_color_inst'].rgba = (mc[0], mc[1], mc[2], 1)
+        en['color'] = WALL_COLOR
+        en['mark_color'] = mc
         self._update_sleep_visual(en)
+        self._update_carrier_star_visual(en)
 
     def _make_enemy_dict(self, idx, en_state, saved, e_spawn=None, color_id=0, is_carrier=False):
         if saved:
@@ -876,7 +998,7 @@ class GameWorldBase(Widget):
         body_color = mark_color if is_carrier else WALL_COLOR
         mcolor = (0, 0, 0) if is_carrier else mark_color
         pattern_idx = en_state.get('pattern_idx', 0)
-        (egroup, translate, emark, edots, pattern,
+        (egroup, translate, emark, star_group, edots, pattern,
          body_inst, mark_inst, edot_colors) = \
             self._create_enemy_group(pattern_idx, body_color, mcolor)
         if saved:
@@ -903,13 +1025,15 @@ class GameWorldBase(Widget):
             'grid': Vector(*cur), 'pixel': pixel, 'dir': direction, 'last_dir': last_dir,
             'current_cell': cur, 'next_cell': nxt,
             'g_group': egroup, 'g_translate': translate, 'g_mark': emark,
+            'g_star_group': star_group, 'g_star_triangles': [], 'g_star_local': [],
+            'g_star_color': None,
             'g_dots': edots, 'g_pattern': pattern, 'g_dot_colors': edot_colors,
             'body_color_inst': body_inst, 'mark_color_inst': mark_inst,
             'sleep_counter': sleep_counter, '_just_moved': False,
             '_just_woke': False, 'pause_after_door': False,
             'last_drawn_dir': (None, None), 'is_visible': True, 'visible_cells': set(),
         }
-        self._update_sleep_visual(en_dict)
+        self._update_carrier_visual(en_dict)
         return en_dict
 
     def _build_canvas(self):
@@ -954,11 +1078,9 @@ class GameWorldBase(Widget):
         self.dynamic_group.add(self.player_group)
         self.compass_dir = None
 
-        # Кэш цепочек обзора и кэш BFS-дистанции до цели компаса.
         self._los_cache = {}
         self._compass_cache = None
 
-        # Инструкции камеры создаются лениво и переиспользуются.
         self._cam_translate = None
         self._cam_scale = None
         self._cam_offset = None
@@ -1258,9 +1380,6 @@ class GameWorldBase(Widget):
         self.compass_dir = best_dir
 
     def _get_los_chain(self, ex, ey, dx, dy):
-        """Возвращает цепочку клеток вдоль направления обзора без учёта
-        других врагов. Кэшируется по (cell, dir) — цепочка статична,
-        т.к. зависит только от стен/дверей."""
         key = (ex, ey, dx, dy)
         chain = self._los_cache.get(key)
         if chain is not None:
@@ -1319,6 +1438,11 @@ class GameWorldBase(Widget):
         en['is_carrier'] = False
         self._update_carrier_visual(en)
         self.interactive_redraw_needed = True
+        app = App.get_running_app()
+        if 0 <= cid < len(self.snd_enemy_drop):
+            snd = self.snd_enemy_drop[cid]
+            if snd and not app.is_muted:
+                snd.play()
 
     def _pickup_button(self, en):
         if en.get('is_carrier', False):
@@ -1326,10 +1450,16 @@ class GameWorldBase(Widget):
         pos = en['current_cell']
         if pos not in self.ground_buttons:
             return
+        cid = self.ground_buttons[pos]
         del self.ground_buttons[pos]
         en['is_carrier'] = True
         self._update_carrier_visual(en)
         self.interactive_redraw_needed = True
+        app = App.get_running_app()
+        if 0 <= cid < len(self.snd_enemy_pickup):
+            snd = self.snd_enemy_pickup[cid]
+            if snd and not app.is_muted:
+                snd.play()
 
     def _get_slept_pct(self):
         total = len(self.enemies)
@@ -1580,10 +1710,18 @@ class GameWorldBase(Widget):
                     chosen['pause_after_door'] = False
                     self._update_sleep_visual(chosen)
                     self.sleep_cycle_set.discard(chosen['idx'])
+                    reset_done = False
                     if not self.sleep_cycle_set:
                         self.sleep_cycle_set = set(e['idx'] for e in self.enemies)
                         self.full_sleep_cycles += 1
                         cycle_completed = True
+                        reset_done = True
+                    if reset_done:
+                        for en2 in self.enemies:
+                            if en2.get('is_carrier', False):
+                                self._update_carrier_star_visual(en2)
+                    elif chosen.get('is_carrier', False):
+                        self._update_carrier_star_visual(chosen)
                     was_sleeping.add(id(chosen))
 
         union_vis = set()
@@ -1718,7 +1856,7 @@ class GameWorldBase(Widget):
                             self.interactive_redraw_needed = True
                     if self.hatch_open and (gx, gy) == self.hatch_pos:
                         self.active = False
-                        if self.snd_joy and not app.is_muted: self.snd_joy.play()
+                        if self.snd_victory and not app.is_muted: self.snd_victory.play()
                         delete_all_saves()
                         app.root.get_screen('game').show_overlay('win')
                         return
@@ -2014,6 +2152,10 @@ class GameWorldStatic(GameWorldBase):
 
             self.sleep_cycle_set = set(e['idx'] for e in self.enemies)
 
+        for en in self.enemies:
+            if en.get('is_carrier', False):
+                self._update_carrier_star_visual(en)
+
         cc = [0] * self.num_colors
         for en in self.enemies:
             cid = en.get('color_id', 0)
@@ -2087,7 +2229,6 @@ class GameWorldStatic(GameWorldBase):
         self.stencil_rect2.size = (maze_size, maze_size)
 
     def update_camera(self):
-        # Создаём инструкции один раз, дальше только мутируем — без clear().
         if self._cam_translate is None:
             self._cam_translate = Translate(0, 0, 0)
             self._cam_scale = Scale(1, 1, 1)
@@ -2236,7 +2377,6 @@ class GameWorldStatic(GameWorldBase):
             ncx, ncy = en['next_cell']
             ex = ccx * TOTAL_STEP + (ncx - ccx) * TOTAL_STEP * progress
             ey = ccy * TOTAL_STEP + (ncy - ccy) * TOTAL_STEP * progress
-            # Мутируем существующий вектор — без аллокаций.
             en['pixel'].x = ex
             en['pixel'].y = ey
             ecx, ecy = ex + CELL_SIZE / 2, ey + CELL_SIZE / 2
@@ -2477,6 +2617,10 @@ class GameWorldLarge(GameWorldBase):
                     slot_idx += 1
 
             self.sleep_cycle_set = set(e['idx'] for e in self.enemies)
+
+        for en in self.enemies:
+            if en.get('is_carrier', False):
+                self._update_carrier_star_visual(en)
 
         cc = [0] * self.num_colors
         for en in self.enemies:
@@ -2729,7 +2873,6 @@ class GameWorldLarge(GameWorldBase):
             vcx = ccx + (ncx - ccx) * progress
             vcy = ccy + (ncy - ccy) * progress
             if abs(vcx - gx) > vr or abs(vcy - gy) > vr:
-                # Скрываем: сдвигаем группу далеко за пределы мира.
                 if en.get('is_visible', True):
                     en['g_translate'].x = -100000
                     en['g_translate'].y = -100000
@@ -2873,7 +3016,7 @@ class GameWorldLarge(GameWorldBase):
             f_size = self.f_size
             row_h = self.row_h
             autosave_h = getattr(self, 'autosave_h', int(row_h * 0.9))
-            row3_cy = maze_top_ = self.maze_top + autosave_h / 2
+            row3_cy = self.maze_top + autosave_h / 2
             icon_r = min(f_size * 0.55, row_h * 0.4)
             max_icon_r = row_h * 0.38
             sc = min(self.maze_scale * 0.5, max_icon_r * 2.0 / CELL_SIZE)
@@ -3025,8 +3168,6 @@ class GameWorldLarge(GameWorldBase):
                 if not tied and min_ces:
                     carrier_idx = min_ces[0]['idx']
 
-        # Округляем значения для сравнения состояния — панель обновляется реже,
-        # визуально разница незаметна (расстояния меняются шагом 2 выше 4).
         r_btn = _round_hud_dist(btn_dist)
         r_min = _round_hud_dist(min_d)
         extra_cur = (r_btn, btn_color, show_hatch, carrier_idx, r_min,
@@ -3165,6 +3306,25 @@ class PlayerIcon(Widget):
                     size=(eye_r * 2, eye_r * 2))
             Ellipse(pos=(cx + eye_off - eye_r, cy + eye_dy - eye_r),
                     size=(eye_r * 2, eye_r * 2))
+
+
+class MenuModeButton(Button):
+    def __init__(self, subtext='', **kwargs):
+        super().__init__(**kwargs)
+        self._sub_label = Label(text=subtext, font_size='13sp', bold=True,
+                                color=(1, 1, 1, 1), halign='center', valign='bottom')
+        self.add_widget(self._sub_label)
+        self.bind(pos=self._update_sub_layout, size=self._update_sub_layout)
+        self._update_sub_layout()
+
+    def _update_sub_layout(self, *args):
+        if not hasattr(self, '_sub_label'):
+            return
+        self._sub_label.pos = self.pos
+        self._sub_label.size = self.size
+        self._sub_label.text_size = (self.width, self.height)
+        self._sub_label.halign = 'center'
+        self._sub_label.valign = 'bottom'
 
 
 class LoadingScreen(Screen):
@@ -3362,7 +3522,7 @@ class GameScreen(Screen):
             self.f.remove_widget(self.joystick)
         overlay = FloatLayout()
         if state == 'win':
-            lbl = Label(text="Victory", font_size='50sp', color=(0, 1, 0, 0.7),
+            lbl = Label(text="Victory", font_size='50sp', color=(0, 1, 0, 0.5),
                         bold=True, pos_hint={'center_y': 0.6})
             btn = Button(text=f'Level {App.get_running_app().current_level + 1}',
                          size_hint=(0.8, 0.1), pos_hint={'center_x': 0.5, 'y': 0.05})
@@ -3370,7 +3530,7 @@ class GameScreen(Screen):
             overlay.add_widget(lbl)
             overlay.add_widget(btn)
         else:
-            lbl = Label(text="Defeat", font_size='23sp', color=(1, 0, 0, 0.7),
+            lbl = Label(text="You were noticed", font_size='23sp', color=(1, 0, 0, 0.5),
                         bold=True, pos_hint={'center_y': 0.6})
             btn_last = Button(text='Last', font_size='22sp', size_hint=(1.0, 0.15),
                               pos_hint={'center_x': 0.5, 'y': 0.12})
@@ -3413,12 +3573,13 @@ class MenuScreen(Screen):
         l = FloatLayout()
         self._icon = PlayerIcon(size_hint=(None, None))
         l.add_widget(self._icon)
-        for y, text, mode in [(0.68, '100x100', MODE_100),
-                              (0.52, '50x50', MODE_50),
-                              (0.36, '20x20', MODE_20),
-                              (0.20, '10x10', MODE_10)]:
-            btn = Button(text=text, font_size='26sp', bold=True,
-                         size_hint=(.6, .11), pos_hint={'center_x': .5, 'center_y': y})
+        for y, text, subtext, mode in [
+                (0.68, '100x100', '100 enemies', MODE_100),
+                (0.52, '50x50', '50 enemies', MODE_50),
+                (0.36, '20x20', '20 enemies', MODE_20),
+                (0.20, '10x10', '10 enemies (very hard)', MODE_10)]:
+            btn = MenuModeButton(subtext=subtext, text=text, font_size='26sp', bold=True,
+                                 size_hint=(.6, .11), pos_hint={'center_x': .5, 'center_y': y})
             btn.bind(on_release=lambda x, m=mode: self.start(m))
             l.add_widget(btn)
         self.add_widget(l)
