@@ -77,6 +77,8 @@ SLEEP_ALPHA = 0.5
 
 POCKET_FLOOR_COLOR = (0.15, 0.15, 0.15)
 
+TEXT_COLOR = WALL_COLOR
+
 
 def _compute_hud_dims(sw, has_autosave_digit=False):
     f_size = max(14, int(sw / 30))
@@ -1057,7 +1059,7 @@ class GameWorldBase(Widget):
         self.hud_dynamic_group = InstructionGroup(); self.canvas.add(self.hud_dynamic_group)
         self.hud_fps_group = InstructionGroup(); self.canvas.add(self.hud_fps_group)
 
-        self._hud_fps_color = Color(1, 1, 1, 1)
+        self._hud_fps_color = Color(*TEXT_COLOR, 1)
         self._hud_fps_rect = Rectangle(pos=(-1000, -1000), size=(0, 0))
         self.hud_fps_group.add(self._hud_fps_color)
         self.hud_fps_group.add(self._hud_fps_rect)
@@ -1531,7 +1533,7 @@ class GameWorldBase(Widget):
         if group is None:
             group = self.hud_dynamic_group
         tex = get_text_texture(text, font_size)
-        group.add(Color(1, 1, 1, 1))
+        group.add(Color(*TEXT_COLOR, 1))
         group.add(Rectangle(texture=tex, pos=(x, y - tex.size[1] / 2), size=tex.size))
         return tex.size[0]
 
@@ -1561,7 +1563,7 @@ class GameWorldBase(Widget):
                 _draw_star(group, scx, scy, trophy_cell, rgb)
             else:
                 _draw_star_outline(group, scx, scy, trophy_cell,
-                                   (0.25, 0.25, 0.25, 0.7))
+                                   (*TEXT_COLOR, 0.7))
 
     def _draw_hatch_icon(self, cx, cy, size, group=None):
         if group is None:
@@ -2267,7 +2269,7 @@ class GameWorldStatic(GameWorldBase):
             top_row_cy = self.maze_top + self.hud_h - self.row_h / 2
             tx = 15
             ty = top_row_cy - tex.size[1] / 2
-            self.level_group.add(Color(1, 1, 0, 1))
+            self.level_group.add(Color(*TEXT_COLOR, 1))
             self.level_group.add(Rectangle(texture=tex, pos=(tx, ty), size=tex.size))
 
     def draw_static(self):
@@ -2416,12 +2418,12 @@ class GameWorldStatic(GameWorldBase):
             cur_y = sh - 25
 
             tex_lvl = get_text_texture(f"Level-{self.level}", f_size)
-            self.hud_static_group.add(Color(1, 1, 0, 1))
+            self.hud_static_group.add(Color(*TEXT_COLOR, 1))
             self.hud_static_group.add(Rectangle(texture=tex_lvl, pos=(cx - tex_lvl.size[0]/2, cur_y - tex_lvl.size[1]/2), size=tex_lvl.size))
             cur_y -= row_h * 1.2
 
             tex_doors = get_text_texture(f"Doors: {self.num_doors}", f_size)
-            self.hud_static_group.add(Color(1, 1, 1, 1))
+            self.hud_static_group.add(Color(*TEXT_COLOR, 1))
             self.hud_static_group.add(Rectangle(texture=tex_doors, pos=(cx - tex_doors.size[0]/2, cur_y - tex_doors.size[1]/2), size=tex_doors.size))
             cur_y -= row_h * 1.2
 
@@ -2442,7 +2444,7 @@ class GameWorldStatic(GameWorldBase):
                     rgb = self.color_palette[cid] if 0 <= cid < len(self.color_palette) else (0.5, 0.5, 0.5)
                     _draw_star(self.hud_static_group, scx, scy, sz, rgb)
                 else:
-                    _draw_star_outline(self.hud_static_group, scx, scy, sz, (0.25, 0.25, 0.25, 0.7), width=1.0)
+                    _draw_star_outline(self.hud_static_group, scx, scy, sz, (*TEXT_COLOR, 0.7), width=1.0)
 
     def draw_hud_dynamic(self):
         self.hud_dynamic_group.clear()
@@ -2736,7 +2738,7 @@ class GameWorldLarge(GameWorldBase):
             top_row_cy = self.maze_top + self.hud_h - self.row_h / 2
             tx = 15
             ty = top_row_cy - tex.size[1] / 2
-            self.level_group.add(Color(1, 1, 0, 1))
+            self.level_group.add(Color(*TEXT_COLOR, 1))
             self.level_group.add(Rectangle(texture=tex, pos=(tx, ty), size=tex.size))
 
     def draw_static(self, px, py):
@@ -2917,7 +2919,6 @@ class GameWorldLarge(GameWorldBase):
         group.add(Color(*mc))
         group.add(Line(circle=(cx, cy, 18 * scale, a_s, a_e), width=2 * scale))
 
-        # --- звезда на теле носителя (для carrier) — как в лабиринте ---
         if en.get('is_carrier', False):
             cycle_set = getattr(self, 'sleep_cycle_set', None)
             alpha = 0.4 if (cycle_set is not None and en['idx'] in cycle_set) else 1.0
@@ -2939,7 +2940,6 @@ class GameWorldLarge(GameWorldBase):
                 x1, y1 = star_verts[i]
                 x2, y2 = star_verts[(i + 1) % 10]
                 group.add(Triangle(points=[cx, cy, x1, y1, x2, y2]))
-        # --- конец звёзды ---
 
         pts = DOT_PATTERNS[en['pattern_idx']] if 0 <= en['pattern_idx'] < len(DOT_PATTERNS) else []
         rad, dsz = 3 * scale, 6 * scale
@@ -2980,12 +2980,12 @@ class GameWorldLarge(GameWorldBase):
             cur_y = sh - 25
 
             tex_lvl = get_text_texture(f"Level-{self.level}", f_size)
-            self.hud_static_group.add(Color(1, 1, 0, 1))
+            self.hud_static_group.add(Color(*TEXT_COLOR, 1))
             self.hud_static_group.add(Rectangle(texture=tex_lvl, pos=(cx - tex_lvl.size[0]/2, cur_y - tex_lvl.size[1]/2), size=tex_lvl.size))
             cur_y -= row_h * 1.1
 
             tex_doors = get_text_texture(f"Doors: {self.num_doors}", f_size)
-            self.hud_static_group.add(Color(1, 1, 1, 1))
+            self.hud_static_group.add(Color(*TEXT_COLOR, 1))
             self.hud_static_group.add(Rectangle(texture=tex_doors, pos=(cx - tex_doors.size[0]/2, cur_y - tex_doors.size[1]/2), size=tex_doors.size))
             cur_y -= row_h * 1.1
 
@@ -3006,7 +3006,7 @@ class GameWorldLarge(GameWorldBase):
                     rgb = self.color_palette[cid] if 0 <= cid < len(self.color_palette) else (0.5, 0.5, 0.5)
                     _draw_star(self.hud_static_group, scx, scy, sz, rgb)
                 else:
-                    _draw_star_outline(self.hud_static_group, scx, scy, sz, (0.25, 0.25, 0.25, 0.7), width=1.0)
+                    _draw_star_outline(self.hud_static_group, scx, scy, sz, (*TEXT_COLOR, 0.7), width=1.0)
 
     def draw_hud_dynamic(self):
         self.hud_dynamic_group.clear()
@@ -3117,7 +3117,7 @@ class GameWorldLarge(GameWorldBase):
 
             val_str = f"{btn_dist}" if btn_dist is not None else "-"
             tex_v = get_text_texture(val_str, f_size)
-            self.hud_extra_group.add(Color(1, 1, 1, 1))
+            self.hud_extra_group.add(Color(*TEXT_COLOR, 1))
             self.hud_extra_group.add(Rectangle(texture=tex_v, pos=(cx + 10, row_y - tex_v.size[1]/2), size=tex_v.size))
             row_y -= row_h * 1.2
 
@@ -3133,7 +3133,7 @@ class GameWorldLarge(GameWorldBase):
             dist_val = min_d
             dist_str = f"{dist_val}" if dist_val < 9999 else "-"
             tex_d = get_text_texture(dist_str, f_size)
-            self.hud_extra_group.add(Color(1, 1, 1, 1))
+            self.hud_extra_group.add(Color(*TEXT_COLOR, 1))
             self.hud_extra_group.add(Rectangle(texture=tex_d, pos=(cx + 10, row_y - tex_d.size[1]/2), size=tex_d.size))
 
     def _update_hud_state(self):
@@ -3289,7 +3289,7 @@ class MuteButton(Widget):
             Color(0.15, 0.15, 0.15)
             ot = max(3, self.width * 0.08)
             Ellipse(pos=(self.x + ot / 2, self.y + ot / 2), size=(self.width - ot, self.height - ot))
-            Color(1, 1, 1)
+            Color(*TEXT_COLOR)
             Rectangle(pos=(cx - r * 0.4, cy - r * 0.15), size=(r * 0.2, r * 0.3))
             Quad(points=[cx - r * 0.2, cy - r * 0.15, cx + r * 0.2, cy - r * 0.4,
                          cx + r * 0.2, cy + r * 0.4, cx - r * 0.2, cy + r * 0.15])
@@ -3337,7 +3337,7 @@ class MenuModeButton(Button):
     def __init__(self, subtext='', **kwargs):
         super().__init__(**kwargs)
         self._sub_label = Label(text=subtext, font_size='13sp', bold=True,
-                                color=(1, 1, 1, 1), halign='center', valign='bottom')
+                                color=(*TEXT_COLOR, 1), halign='center', valign='bottom')
         self.add_widget(self._sub_label)
         self.bind(pos=self._update_sub_layout, size=self._update_sub_layout)
         self._update_sub_layout()
@@ -3355,7 +3355,8 @@ class MenuModeButton(Button):
 class LoadingScreen(Screen):
     def on_enter(self):
         _schedule_canvas_refresh()
-        self.lbl = Label(text="Generating.", font_size='17sp', bold=True)
+        self.lbl = Label(text="Generating.", font_size='17sp', bold=True,
+                         color=(*TEXT_COLOR, 1))
         self.add_widget(self.lbl)
         self.dot_count = 1
         self.ticker = Clock.schedule_interval(self.update_dots, 0.5)
@@ -3550,7 +3551,8 @@ class GameScreen(Screen):
             lbl = Label(text="Victory", font_size='50sp', color=(0, 1, 0, 0.5),
                         bold=True, pos_hint={'center_y': 0.6})
             btn = Button(text=f'Level {App.get_running_app().current_level + 1}',
-                         size_hint=(0.8, 0.1), pos_hint={'center_x': 0.5, 'y': 0.05})
+                         size_hint=(0.8, 0.1), pos_hint={'center_x': 0.5, 'y': 0.05},
+                         color=(*TEXT_COLOR, 1))
             btn.bind(on_release=lambda x: self.next_lvl())
             overlay.add_widget(lbl)
             overlay.add_widget(btn)
@@ -3558,17 +3560,35 @@ class GameScreen(Screen):
             lbl = Label(text="You were noticed", font_size='23sp', color=(1, 0, 0, 0.5),
                         bold=True, pos_hint={'center_y': 0.6})
             btn_last = Button(text='Last', font_size='22sp', size_hint=(1.0, 0.15),
-                              pos_hint={'center_x': 0.5, 'y': 0.12})
+                              pos_hint={'center_x': 0.5, 'y': 0.12},
+                              color=(*TEXT_COLOR, 1))
             btn_last.bind(on_release=lambda x: self.restart_from('last'))
             overlay.add_widget(lbl)
             overlay.add_widget(btn_last)
             if has_any_save():
                 btn_prev = Button(text='Prev', font_size='13sp', size_hint=(0.4, 0.06),
-                                  pos_hint={'center_x': 0.5, 'y': 0.02})
+                                  pos_hint={'center_x': 0.25, 'y': 0.02},
+                                  color=(*TEXT_COLOR, 1))
                 btn_prev.bind(on_release=lambda x: self.restart_from('pre_last'))
                 overlay.add_widget(btn_prev)
+                btn_menu = Button(text='Menu', font_size='13sp', size_hint=(0.4, 0.06),
+                                  pos_hint={'center_x': 0.75, 'y': 0.02},
+                                  color=(*TEXT_COLOR, 1))
+                btn_menu.bind(on_release=lambda x: self.go_menu())
+                overlay.add_widget(btn_menu)
+            else:
+                btn_menu = Button(text='Menu', font_size='13sp', size_hint=(0.4, 0.06),
+                                  pos_hint={'center_x': 0.5, 'y': 0.02},
+                                  color=(*TEXT_COLOR, 1))
+                btn_menu.bind(on_release=lambda x: self.go_menu())
+                overlay.add_widget(btn_menu)
         self.f.add_widget(overlay)
         _schedule_canvas_refresh()
+
+    def go_menu(self):
+        app = App.get_running_app()
+        app.is_restarting = False
+        self.manager.current = 'menu'
 
     def next_lvl(self):
         app = App.get_running_app()
@@ -3604,6 +3624,7 @@ class MenuScreen(Screen):
                 (0.36, '20x20', '20 enemies', MODE_20),
                 (0.20, '10x10', '10 enemies (very hard)', MODE_10)]:
             btn = MenuModeButton(subtext=subtext, text=text, font_size='26sp', bold=True,
+                                 color=(*TEXT_COLOR, 1),
                                  size_hint=(.6, .11), pos_hint={'center_x': .5, 'center_y': y})
             btn.bind(on_release=lambda x, m=mode: self.start(m))
             l.add_widget(btn)
