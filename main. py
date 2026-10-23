@@ -10,7 +10,7 @@ import tempfile
 from collections import deque
 from kivy.app import App
 from kivy.uix.widget import Widget
-from kivy.graphics import (Color, Ellipse, Rectangle, PushMatrix, PopMatrix,
+from kivy.graphics import (Color, Ellipse, Rectangle, Triangle, PushMatrix, PopMatrix,
                            Scale, Translate, Line, InstructionGroup, Quad,
                            StencilPush, StencilUse, StencilUnUse, StencilPop)
 from kivy.clock import Clock
@@ -32,23 +32,30 @@ GREEN_BUTTON_COLOR = (0, 1, 0)
 MAZE_W, MAZE_H = 20, 20
 NUM_DEAD_ENDS = 100
 NUM_ENEMIES = 20
+
+MAZE_W_10, MAZE_H_10 = 10, 10
+NUM_DEAD_ENDS_10 = 25
+NUM_ENEMIES_10 = 10
+
 MAZE_WORLD_DIM = MAZE_W * TOTAL_STEP + WALL_THICK
 MAZE_WORLD_MIN = -WALL_THICK
 MAZE_WORLD_MAX = MAZE_W * TOTAL_STEP
 MAZE_WORLD_CX = (MAZE_WORLD_MIN + MAZE_WORLD_MAX) / 2.0
 
-HUD_H = 180
-MIN_JOY_SIZE = 80
+MAZE_WORLD_DIM_10 = MAZE_W_10 * TOTAL_STEP + WALL_THICK
+MAZE_WORLD_CX_10 = (-WALL_THICK + MAZE_W_10 * TOTAL_STEP) / 2.0
 
+MIN_JOY_SIZE = 80
 BTN_R = 12
+TROPHY_CELL_MULT = 3.3
+TROPHY_GAP_MULT = 0.5
 
 FIXED_DOOR_COLORS = [
-    (1.00, 0.00, 0.00),
-    (0.00, 0.60, 0.00),
-    (1.00, 1.00, 0.00),
-    (0.35, 0.80, 1.00),
-    (1.00, 1.00, 1.00),
+    (1.00, 0.00, 0.00), (0.00, 0.60, 0.00), (1.00, 1.00, 0.00),
+    (0.35, 0.80, 1.00), (1.00, 1.00, 1.00),
 ]
+
+BUTTONS_TO_OPEN = 5
 
 DIRS = {'N': (0, 1), 'S': (0, -1), 'E': (1, 0), 'W': (-1, 0)}
 INV_DIRS = {'N': 'S', 'S': 'N', 'E': 'W', 'W': 'E'}
@@ -57,12 +64,27 @@ VEC_ZERO = Vector(0, 0)
 SAVE_DIR = None
 SAVE_EXT = ".pkl"
 
-MODE_20, MODE_50, MODE_100 = '20', '50', '100'
-_MAP_FILES = {MODE_20: 'maze_map_20.pkl', MODE_50: 'maze_map_50.pkl', MODE_100: 'maze_map_100.pkl'}
-_SAVE_PREFIXES = {MODE_20: 'save_game_20_', MODE_50: 'save_game_50_', MODE_100: 'save_game_100_'}
+MODE_10, MODE_20, MODE_50, MODE_100 = '10', '20', '50', '100'
+_MAP_FILES = {MODE_10: 'maze_map_10.pkl', MODE_20: 'maze_map_20.pkl',
+              MODE_50: 'maze_map_50.pkl', MODE_100: 'maze_map_100.pkl'}
+_SAVE_PREFIXES = {MODE_10: 'save_game_10_', MODE_20: 'save_game_20_',
+                  MODE_50: 'save_game_50_', MODE_100: 'save_game_100_'}
 CURRENT_MODE = MODE_20
 
-MAP_VERSION = 5
+MAP_VERSION = 12
+
+SLEEP_ALPHA = 0.5
+
+POCKET_FLOOR_COLOR = (0.15, 0.15, 0.15)
+
+
+def _compute_hud_dims(sw, has_autosave_digit=False):
+    f_size = max(14, int(sw / 30))
+    row_h = int(f_size * 1.7)
+    trophy_h = int(row_h * 1.2)
+    autosave_h = int(row_h * 0.9)
+    hud_h = row_h + trophy_h + autosave_h + 8
+    return f_size, row_h, trophy_h, autosave_h, hud_h
 
 
 def set_current_mode(mode):
@@ -86,14 +108,7 @@ def _schedule_canvas_refresh():
 def _get_save_dir():
     global SAVE_DIR
     if SAVE_DIR is None:
-        try:
-            app = App.get_running_app()
-            if app is not None and getattr(app, 'user_data_dir', None):
-                SAVE_DIR = app.user_data_dir
-        except Exception:
-            pass
-        if SAVE_DIR is None:
-            SAVE_DIR = os.path.dirname(os.path.abspath(__file__))
+        SAVE_DIR = os.path.dirname(os.path.abspath(__file__))
         try:
             os.makedirs(SAVE_DIR, exist_ok=True)
         except OSError:
@@ -178,12 +193,9 @@ def delete_all_saves():
 
 def _generate_dot_patterns():
     perms = [
-        [2, 1, 0, 5, 4, 3, 8, 7, 6],
-        [6, 7, 8, 3, 4, 5, 0, 1, 2],
-        [0, 3, 6, 1, 4, 7, 2, 5, 8],
-        [8, 5, 2, 7, 4, 1, 6, 3, 0],
-        [8, 7, 6, 5, 4, 3, 2, 1, 0],
-        [6, 3, 0, 7, 4, 1, 8, 5, 2],
+        [2, 1, 0, 5, 4, 3, 8, 7, 6], [6, 7, 8, 3, 4, 5, 0, 1, 2],
+        [0, 3, 6, 1, 4, 7, 2, 5, 8], [8, 5, 2, 7, 4, 1, 6, 3, 0],
+        [8, 7, 6, 5, 4, 3, 2, 1, 0], [6, 3, 0, 7, 4, 1, 8, 5, 2],
         [2, 5, 8, 1, 4, 7, 0, 3, 6],
     ]
 
@@ -195,8 +207,7 @@ def _generate_dot_patterns():
         return r
 
     def orbit(mask):
-        result = set()
-        cur = mask
+        result, cur = set(), mask
         for _ in range(4):
             result.add(cur)
             result.add(apply(cur, perms[0]))
@@ -219,23 +230,32 @@ def _mask_to_positions(mask):
     pts = []
     for i in range(9):
         if (mask >> i) & 1:
-            col = i % 3
-            row = i // 3
-            x = (col - 1) * 8
-            y = (1 - row) * 8
-            pts.append((x, y))
+            col, row = i % 3, i // 3
+            pts.append(((col - 1) * 8, (1 - row) * 8))
     return pts
 
 
 _SYM_MASKS, _ASYM_MASKS = _generate_dot_patterns()
-_ALL_MASKS_SORTED = sorted(_SYM_MASKS + _ASYM_MASKS,
-                           key=lambda m: (bin(m).count('1'), m))
+_ALL_MASKS_SORTED = sorted(_SYM_MASKS + _ASYM_MASKS, key=lambda m: (bin(m).count('1'), m))
 DOT_PATTERNS = [_mask_to_positions(m) for m in _ALL_MASKS_SORTED]
-PATTERN_INDICES_20 = list(range(0, 100, 5))
 
-_SYM_MASKS_SET = set(_SYM_MASKS)
-SYMMETRIC_PATTERN_INDICES = [i for i, m in enumerate(_ALL_MASKS_SORTED)
-                             if m in _SYM_MASKS_SET]
+_all_pairs = [(i, _ALL_MASKS_SORTED[i]) for i in range(len(_ALL_MASKS_SORTED))]
+_all_pairs.sort(key=lambda p: (-bin(p[1]).count('1'), p[0]))
+_ALL_PATTERNS_BY_DOTS_DESC = [i for i, _ in _all_pairs]
+
+_GROUP_SIZE = len(_ALL_PATTERNS_BY_DOTS_DESC) // 5
+PATTERNS_BY_COLOR = [
+    _ALL_PATTERNS_BY_DOTS_DESC[c * _GROUP_SIZE: (c + 1) * _GROUP_SIZE]
+    for c in range(5)
+]
+_extra = len(_ALL_PATTERNS_BY_DOTS_DESC) - 5 * _GROUP_SIZE
+for c in range(_extra):
+    PATTERNS_BY_COLOR[c].append(_ALL_PATTERNS_BY_DOTS_DESC[5 * _GROUP_SIZE + c])
+
+PATTERNS_10_BY_COLOR = [PATTERNS_BY_COLOR[c][:2] for c in range(5)]
+PATTERNS_20_BY_COLOR = [PATTERNS_BY_COLOR[c][:4] for c in range(5)]
+PATTERNS_50_BY_COLOR = [PATTERNS_BY_COLOR[c][:10] for c in range(5)]
+PATTERNS_100_BY_COLOR = [PATTERNS_BY_COLOR[c][:20] for c in range(5)]
 
 TEXT_CACHE = {}
 
@@ -249,9 +269,281 @@ def get_text_texture(text, font_size):
     return TEXT_CACHE[key]
 
 
+def _draw_star(group, cx, cy, size, rgb):
+    if size <= 0:
+        return
+    if not (isinstance(rgb, (list, tuple)) and len(rgb) >= 3):
+        rgb = (1, 1, 1)
+    outer_r = size / 2.0
+    inner_r = outer_r * 0.382
+    verts = []
+    for i in range(10):
+        angle = math.pi / 2 + i * math.pi / 5
+        r = outer_r if i % 2 == 0 else inner_r
+        verts.append((cx + r * math.cos(angle), cy + r * math.sin(angle)))
+    group.add(Color(rgb[0], rgb[1], rgb[2], 1))
+    for i in range(10):
+        x1, y1 = verts[i]
+        x2, y2 = verts[(i + 1) % 10]
+        group.add(Triangle(points=[cx, cy, x1, y1, x2, y2]))
+
+
+def _draw_star_outline(group, cx, cy, size, rgba, width=1.5):
+    if size <= 0:
+        return
+    outer_r = size / 2.0
+    inner_r = outer_r * 0.382
+    pts = []
+    for i in range(10):
+        angle = math.pi / 2 + i * math.pi / 5
+        r = outer_r if i % 2 == 0 else inner_r
+        pts.extend([cx + r * math.cos(angle), cy + r * math.sin(angle)])
+    alpha = rgba[3] if (isinstance(rgba, (list, tuple)) and len(rgba) > 3) else 1
+    group.add(Color(rgba[0], rgba[1], rgba[2], alpha))
+    group.add(Line(points=pts, close=True, width=width))
+
+
+def _find_door_edge_for_de_pure(maze_data, de):
+    cell = maze_data[de[1]][de[0]]
+    first_move = None
+    for d, (dx, dy) in DIRS.items():
+        if cell[d] == 0:
+            first_move = (de[0] + dx, de[1] + dy)
+            break
+    if first_move is None:
+        return None, [de]
+    path = [de, first_move]
+    prev, cur = de, first_move
+    visited = {de, first_move}
+    while True:
+        cell_data = maze_data[cur[1]][cur[0]]
+        openings = sum(1 for d in DIRS if cell_data[d] == 0)
+        if openings >= 3:
+            return ((prev, cur) if prev < cur else (cur, prev)), path
+        next_cell = None
+        for d, (dx, dy) in DIRS.items():
+            if cell_data[d] == 0:
+                cand = (cur[0] + dx, cur[1] + dy)
+                if cand != prev:
+                    next_cell = cand
+                    break
+        if next_cell is None or next_cell in visited:
+            return None, path
+        visited.add(next_cell)
+        prev, cur = cur, next_cell
+        path.append(cur)
+
+
+def _assign_door_colors_spatially_impl(all_doors, num_colors):
+    if num_colors <= 0 or not all_doors:
+        return {}
+    doors = sorted(all_doors)
+    n = len(doors)
+    if n == 1:
+        return {doors[0]: 0}
+
+    base, rem = divmod(n, num_colors)
+    counts = [base + (1 if c < rem else 0) for c in range(num_colors)]
+
+    interleaved = []
+    max_c = max(counts) if counts else 0
+    for r in range(max_c):
+        for c in range(num_colors):
+            if r < counts[c]:
+                interleaved.append(c)
+
+    mids = [((a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5) for (a, b) in doors]
+
+    INF = float('inf')
+    min_to_any = [INF] * n
+    min_to_own = [[INF] * n for _ in range(num_colors)]
+
+    result = {}
+    picked_count = [0] * num_colors
+    picked_total = 0
+    remaining = set(range(n))
+
+    for c in interleaved:
+        if not remaining:
+            break
+
+        if picked_count[c] == 0 and picked_total == 0:
+            best_i = min(remaining)
+        else:
+            best_i = -1
+            best_d = -1.0
+            if picked_count[c] == 0:
+                for i in remaining:
+                    if min_to_any[i] > best_d:
+                        best_d = min_to_any[i]
+                        best_i = i
+            else:
+                own_c = min_to_own[c]
+                for i in remaining:
+                    if own_c[i] > best_d:
+                        best_d = own_c[i]
+                        best_i = i
+
+        xi, yi = mids[best_i]
+        own_c = min_to_own[c]
+        for j in remaining:
+            xj, yj = mids[j]
+            dx = xi - xj
+            dy = yi - yj
+            d = dx * dx + dy * dy
+            if d < min_to_any[j]:
+                min_to_any[j] = d
+            if d < own_c[j]:
+                own_c[j] = d
+
+        result[doors[best_i]] = c
+        picked_count[c] += 1
+        picked_total += 1
+        remaining.discard(best_i)
+
+    return result
+
+
+def _distribute_color_reduction(color_area, color_movable, need, num_colors):
+    reductions = [0] * num_colors
+    current = list(color_area)
+    remaining = need
+
+    while remaining > 0:
+        best_c = -1
+        best_val = -1
+        for c in range(num_colors):
+            if reductions[c] < color_movable[c] and current[c] > best_val:
+                best_val = current[c]
+                best_c = c
+        if best_c < 0:
+            break
+
+        cap = color_movable[best_c] - reductions[best_c]
+        other_max = 0
+        for c in range(num_colors):
+            if c != best_c and current[c] > other_max:
+                other_max = current[c]
+
+        if best_val > other_max:
+            step = min(best_val - other_max, cap, remaining)
+        else:
+            step = min(1, cap, remaining)
+        if step <= 0:
+            break
+
+        reductions[best_c] += step
+        current[best_c] -= step
+        remaining -= step
+
+    return reductions, remaining
+
+
+def _compute_doors_with_corridor_check(maze_data, w, h, dead_ends_set, num_colors=5):
+    target = (w * h) // 2
+    door_edges = {}
+    paths = {}
+    for de in dead_ends_set:
+        edge, path = _find_door_edge_for_de_pure(maze_data, de)
+        if edge is not None:
+            door_edges[de] = edge
+            paths[de] = path
+    if not door_edges:
+        return None, None, None
+
+    region_sizes = {de: len(paths[de]) - 1 for de in door_edges}
+    corridor = w * h - sum(region_sizes.values())
+
+    if corridor > target:
+        return None, None, None
+
+    initial_doors = set(door_edges.values())
+    color_map = _assign_door_colors_spatially_impl(initial_doors, num_colors)
+
+    if corridor == target:
+        pocket_cells = set()
+        for de in door_edges:
+            pocket_cells.update(paths[de][:-1])
+        return door_edges, color_map, pocket_cells
+
+    need = target - corridor
+    max_move = {de: region_sizes[de] - 1 for de in door_edges}
+    total_available = sum(max_move.values())
+    if total_available < need:
+        return None, None, None
+
+    door_to_color = {}
+    color_area = [0] * num_colors
+    for de, edge in door_edges.items():
+        cid = color_map.get(edge, 0)
+        door_to_color[de] = cid
+        color_area[cid] += region_sizes[de]
+
+    color_movable = [0] * num_colors
+    for de in door_edges:
+        color_movable[door_to_color[de]] += max_move[de]
+
+    reductions, leftover = _distribute_color_reduction(
+        color_area, color_movable, need, num_colors)
+    if leftover > 0:
+        return None, None, None
+
+    move_counts = {de: 0 for de in door_edges}
+    for c in range(num_colors):
+        red = reductions[c]
+        if red <= 0:
+            continue
+        doors_c = [de for de in door_edges if door_to_color[de] == c]
+        doors_c.sort(key=lambda de: -max_move[de])
+        for de in doors_c:
+            if red <= 0:
+                break
+            step = min(red, max_move[de] - move_counts[de])
+            move_counts[de] += step
+            red -= step
+
+    new_door_edges = {}
+    new_color_map = {}
+    pocket_cells = set()
+    for de in door_edges:
+        k = len(paths[de]) - 1
+        new_k = k - move_counts[de]
+        a = paths[de][new_k - 1]
+        b = paths[de][new_k]
+        new_edge = (a, b) if a < b else (b, a)
+        new_door_edges[de] = new_edge
+        new_color_map[new_edge] = door_to_color[de]
+        for cell in paths[de][:new_k]:
+            pocket_cells.add(cell)
+
+    return new_door_edges, new_color_map, pocket_cells
+
+
+def _place_doors_no_corridor_check(maze_data, dead_ends_set, num_colors=5):
+    doors = {}
+    paths = {}
+    for de in dead_ends_set:
+        edge, path = _find_door_edge_for_de_pure(maze_data, de)
+        if edge is not None:
+            doors[de] = edge
+            paths[de] = path
+    door_set = set(doors.values())
+    colors = _assign_door_colors_spatially_impl(door_set, num_colors)
+    pocket_cells = set()
+    for de, path in paths.items():
+        pocket_cells.update(path[:-1])
+    return doors, colors, pocket_cells
+
+
 class SoundGenerator:
     @staticmethod
     def create_beep(freqs, durations, name):
+        fname = os.path.join(tempfile.gettempdir(), f"sys_{name}.wav")
+        try:
+            if os.path.exists(fname) and os.path.getsize(fname) > 0:
+                return fname
+        except OSError:
+            pass
         sample_rate = 44100
         buf = io.BytesIO()
         try:
@@ -265,7 +557,6 @@ class SoundGenerator:
                         volume = 32767 * (1 - i / num_samples)
                         value = int(volume * math.sin(2 * math.pi * freq * i / sample_rate))
                         wav_file.writeframes(struct.pack('<h', value))
-            fname = os.path.join(tempfile.gettempdir(), f"sys_{name}.wav")
             with open(fname, 'wb') as f:
                 f.write(buf.getvalue())
             return fname
@@ -274,6 +565,12 @@ class SoundGenerator:
 
     @staticmethod
     def create_noise(duration, name):
+        fname = os.path.join(tempfile.gettempdir(), f"sys_{name}.wav")
+        try:
+            if os.path.exists(fname) and os.path.getsize(fname) > 0:
+                return fname
+        except OSError:
+            pass
         sample_rate = 44100
         buf = io.BytesIO()
         try:
@@ -285,7 +582,6 @@ class SoundGenerator:
                 for i in range(num_samples):
                     volume = 15000 * (1 - i / num_samples)
                     wav_file.writeframes(struct.pack('<h', int(volume * random.uniform(-1, 1))))
-            fname = os.path.join(tempfile.gettempdir(), f"sys_{name}.wav")
             with open(fname, 'wb') as f:
                 f.write(buf.getvalue())
             return fname
@@ -298,10 +594,12 @@ SND_STOP_PATH   = SoundGenerator.create_beep([400], [0.1], "stop")
 SND_JOY_PATH    = SoundGenerator.create_beep([800, 1200], [0.1, 0.15], "joy")
 SND_HATCH_PATH  = SoundGenerator.create_beep([400, 600, 800, 1200], [0.1, 0.1, 0.1, 0.3], "hatch")
 SND_PUSH_PATH   = SoundGenerator.create_noise(0.2, "push")
-SND_COLOR_PATH  = SoundGenerator.create_beep([600, 900], [0.1, 0.15], "color")
 SND_RELOAD_PATH = SoundGenerator.create_beep([300, 450, 600], [0.1, 0.1, 0.1], "reload")
 SND_TROPHY_PATH = SoundGenerator.create_beep([523, 659, 784, 1047, 1319], [0.12, 0.12, 0.12, 0.15, 0.45], "trophy")
 SND_CHECKPOINT_PATH = SoundGenerator.create_beep([523, 880], [0.09, 0.18], "checkpoint")
+SND_PICKUP_PATH = SoundGenerator.create_beep(
+    [523.25, 659.25, 783.99, 1046.50, 783.99, 1046.50],
+    [0.09, 0.09, 0.09, 0.20, 0.09, 0.40], "pickup")
 
 
 class MazeGeneratorBase:
@@ -309,11 +607,8 @@ class MazeGeneratorBase:
         self.w, self.h = w, h
         self.grid = None
         self.p_spawn = None
-        self.e_spawns = {}
         self.dead_ends = None
-        self.dead_end_positions = {}
         self.target_de = 0
-        self.buttons = {}
 
     def _bfs(self, start):
         dist = {start: 0}
@@ -330,22 +625,6 @@ class MazeGeneratorBase:
                         q.append(nxt)
         return dist, parent
 
-    def _bfs_nearest_dead_end(self, start, dead_ends_set):
-        dist = {start: 0}
-        q = deque([start])
-        while q:
-            cx, cy = q.popleft()
-            cur = (cx, cy)
-            if cur != start and cur in dead_ends_set:
-                return cur, dist[cur]
-            for d, (dx, dy) in DIRS.items():
-                if self.grid[cy][cx][d] == 0:
-                    nxt = (cx + dx, cy + dy)
-                    if nxt not in dist:
-                        dist[nxt] = dist[cur] + 1
-                        q.append(nxt)
-        return None, None
-
     def _find_topological_center(self):
         dists1, _ = self._bfs((0, 0))
         n1 = max(dists1, key=dists1.get)
@@ -358,17 +637,6 @@ class MazeGeneratorBase:
         center = path[len(path) // 2]
         cd, _ = self._bfs(center)
         return center, cd
-
-    def _compute_btn_pos(self, b_pos):
-        bx, by = b_pos
-        px, py = bx * TOTAL_STEP, by * TOTAL_STEP
-        cell = self.grid[by][bx]
-        open_dir = next((d for d in DIRS if cell[d] == 0), 'N')
-        if open_dir == 'N':   return px + CELL_SIZE / 2, py, 270, 450
-        if open_dir == 'S':   return px + CELL_SIZE / 2, py + CELL_SIZE, 90, 270
-        if open_dir == 'E':   return px, py + CELL_SIZE / 2, 0, 180
-        if open_dir == 'W':   return px + CELL_SIZE, py + CELL_SIZE / 2, 180, 360
-        return px + CELL_SIZE / 2, py + CELL_SIZE / 2, 0, 360
 
     def _generate_growing_tree(self, p):
         grid = [[{'N': 1, 'S': 1, 'E': 1, 'W': 1} for _ in range(self.w)] for _ in range(self.h)]
@@ -394,19 +662,6 @@ class MazeGeneratorBase:
                 active.pop(idx)
         return grid
 
-    def _setup_standard_spawns(self, dists_from_center, num_enemies, p_spawn):
-        valid_des = list(self.dead_ends)
-        de_dists = {de: dists_from_center.get(de, 0) for de in valid_des}
-        for i in range(num_enemies):
-            if not de_dists:
-                break
-            best = max(de_dists, key=de_dists.get)
-            self.e_spawns[i] = best
-            del de_dists[best]
-            new_dists, _ = self._bfs(best)
-            for node in de_dists:
-                de_dists[node] = min(de_dists[node], new_dists.get(node, 999999))
-
     def _count_de(self, g):
         return sum(1 for y in range(self.h) for x in range(self.w)
                    if list(g[y][x].values()).count(1) == 3)
@@ -419,14 +674,7 @@ class MazeGenerator20(MazeGeneratorBase):
         self.grid = self._generate_base_grid()
         self.dead_ends = [(x, y) for y in range(self.h) for x in range(self.w)
                           if list(self.grid[y][x].values()).count(1) == 3]
-        self.p_spawn, cd = self._find_topological_center()
-        self._setup_standard_spawns(cd, NUM_ENEMIES, self.p_spawn)
-        self.dead_end_positions = {b: self._compute_btn_pos(b) for b in self.dead_ends}
-        for b_pos in set(self.e_spawns.values()):
-            bcx, bcy, astart, aend = self.dead_end_positions[b_pos]
-            self.buttons[b_pos] = {'pos': b_pos, 'bcx': bcx, 'bcy': bcy,
-                                   'astart': astart, 'aend': aend,
-                                   'type': 'green', 'collectible': True}
+        self.p_spawn, _ = self._find_topological_center()
 
     def _generate_base_grid(self):
         p = 0.5
@@ -442,10 +690,18 @@ class MazeGenerator20(MazeGeneratorBase):
         return temp
 
 
+class MazeGenerator10(MazeGenerator20):
+    def __init__(self, w=MAZE_W_10, h=MAZE_H_10, target_de=NUM_DEAD_ENDS_10):
+        super().__init__(w, h, target_de)
+
+
 class MazeGeneratorLarge(MazeGeneratorBase):
-    def __init__(self, w=50, h=50, target_min=625, target_max=690, num_enemies=100):
+    def __init__(self, w=50, h=50):
         super().__init__(w, h)
-        self.target_min, self.target_max = target_min, target_max
+        if w == 50:
+            self.target_min, self.target_max = 625, 690
+        else:
+            self.target_min, self.target_max = 2500, 2750
         while True:
             self.grid = self._generate_base_grid()
             self.dead_ends = [(x, y) for y in range(self.h) for x in range(self.w)
@@ -453,14 +709,7 @@ class MazeGeneratorLarge(MazeGeneratorBase):
             if self.target_min <= len(self.dead_ends) <= self.target_max:
                 self.target_de = len(self.dead_ends)
                 break
-        self.p_spawn, cd = self._find_topological_center()
-        self._setup_standard_spawns(cd, num_enemies, self.p_spawn)
-        self.dead_end_positions = {b: self._compute_btn_pos(b) for b in self.dead_ends}
-        for b_pos in set(self.e_spawns.values()):
-            bcx, bcy, astart, aend = self.dead_end_positions[b_pos]
-            self.buttons[b_pos] = {'pos': b_pos, 'bcx': bcx, 'bcy': bcy,
-                                   'astart': astart, 'aend': aend,
-                                   'type': 'green', 'collectible': True}
+        self.p_spawn, _ = self._find_topological_center()
 
     def _generate_base_grid(self):
         p = 0.5
@@ -477,11 +726,24 @@ DOT_RAD = 3
 DOT_SIZE = 6
 
 
+def _round_hud_dist(d):
+    """Округление отображаемых расстояний в HUD (визуально неотличимо,
+    но резко снижает частоту перестроек панели)."""
+    if d is None or d >= 9999:
+        return d
+    if d <= 4:
+        return d
+    return (d // 2) * 2
+
+
 class GameWorldBase(Widget):
     SAVE_VERSION = 0
     IS_LARGE = False
+    _autosave_every_n = 1
+    _autosave_digit = None
 
     cached_btn_dist = None
+    cached_btn_color = None
     _color_counts_tuple = ()
     _door_counts_tuple = ()
 
@@ -496,24 +758,22 @@ class GameWorldBase(Widget):
         self.snd_joy = SoundLoader.load(SND_JOY_PATH)
         self.snd_hatch = SoundLoader.load(SND_HATCH_PATH)
         self.snd_push = SoundLoader.load(SND_PUSH_PATH)
-        self.snd_color = SoundLoader.load(SND_COLOR_PATH)
         self.snd_reload = SoundLoader.load(SND_RELOAD_PATH)
         self.snd_trophy = SoundLoader.load(SND_TROPHY_PATH)
         self.snd_checkpoint = SoundLoader.load(SND_CHECKPOINT_PATH)
+        self.snd_pickup = SoundLoader.load(SND_PICKUP_PATH)
 
     def _init_checkpoint_label(self):
         tex = get_text_texture('Checkpoint', 56)
         self._checkpoint_size = tex.size
         self.checkpoint_group = InstructionGroup()
         self.checkpoint_bg_color = Color(0, 0, 0, 0)
-        self.checkpoint_bg_rect = Rectangle(pos=(-1000, -1000),
-                                            size=(tex.size[0] + 40, tex.size[1] + 40))
+        self.checkpoint_bg_rect = Rectangle(pos=(-1000, -1000), size=(tex.size[0] + 40, tex.size[1] + 40))
         self.checkpoint_color = Color(0, 1, 0.5, 0)
         self.checkpoint_rect = Rectangle(texture=tex, pos=(-1000, -1000), size=tex.size)
-        self.checkpoint_group.add(self.checkpoint_bg_color)
-        self.checkpoint_group.add(self.checkpoint_bg_rect)
-        self.checkpoint_group.add(self.checkpoint_color)
-        self.checkpoint_group.add(self.checkpoint_rect)
+        for inst in (self.checkpoint_bg_color, self.checkpoint_bg_rect,
+                     self.checkpoint_color, self.checkpoint_rect):
+            self.checkpoint_group.add(inst)
         self.canvas.add(self.checkpoint_group)
 
     def _flash_checkpoint(self):
@@ -532,38 +792,35 @@ class GameWorldBase(Widget):
         Animation.cancel_all(self.checkpoint_color, 'a')
         self.checkpoint_bg_color.a = 0.7
         self.checkpoint_color.a = 1.0
-        bg_anim = (Animation(a=0.7, duration=1.2) +
-                   Animation(a=0.0, duration=0.9, t='in_quad'))
-        txt_anim = (Animation(a=1.0, duration=1.2) +
-                    Animation(a=0.0, duration=0.9, t='in_quad'))
-        bg_anim.start(self.checkpoint_bg_color)
-        txt_anim.start(self.checkpoint_color)
+        (Animation(a=0.7, duration=1.2) + Animation(a=0.0, duration=0.9, t='in_quad')).start(self.checkpoint_bg_color)
+        (Animation(a=1.0, duration=1.2) + Animation(a=0.0, duration=0.9, t='in_quad')).start(self.checkpoint_color)
 
     def _create_enemy_group(self, pattern_idx, body_color, mark_color):
         egroup = InstructionGroup()
         egroup.add(PushMatrix())
         translate = Translate(0, 0)
         egroup.add(translate)
-
-        egroup.add(Color(*body_color))
-        ebody = Ellipse(pos=(-CELL_SIZE / 2, -CELL_SIZE / 2), size=(CELL_SIZE, CELL_SIZE))
-        egroup.add(ebody)
-
-        egroup.add(Color(*mark_color))
+        body_color_inst = Color(*body_color)
+        egroup.add(body_color_inst)
+        egroup.add(Ellipse(pos=(-CELL_SIZE / 2, -CELL_SIZE / 2), size=(CELL_SIZE, CELL_SIZE)))
+        mark_color_inst = Color(*mark_color)
+        egroup.add(mark_color_inst)
         emark = Line(circle=(0, 0, 18, 0, 0), width=2)
         egroup.add(emark)
-
         pattern = DOT_PATTERNS[pattern_idx] if 0 <= pattern_idx < len(DOT_PATTERNS) else []
         edots = []
+        edot_colors = []
         for (px, py) in pattern:
-            egroup.add(Color(0, 0, 0))
+            dcol = Color(0, 0, 0)
+            egroup.add(dcol)
             d = Ellipse(pos=(px - DOT_RAD, py - DOT_RAD), size=(DOT_SIZE, DOT_SIZE))
             egroup.add(d)
             edots.append(d)
-
+            edot_colors.append(dcol)
         egroup.add(PopMatrix())
         self.dynamic_group.add(egroup)
-        return egroup, translate, emark, edots, pattern
+        return (egroup, translate, emark, edots, pattern,
+                body_color_inst, mark_color_inst, edot_colors)
 
     def _apply_enemy_rotation(self, en, dx, dy):
         if   dx == 0 and dy == 1:   fa = 0
@@ -571,15 +828,12 @@ class GameWorldBase(Widget):
         elif dx == 0 and dy == -1:  fa = 180
         elif dx == -1 and dy == 0:  fa = 270
         else:                       fa = 0
-
         if en['turn_rule'] == 'right':
-            a_s, a_e = fa + 5, fa + 50
+            a_s, a_e = fa - 17.5, fa + 50.0
         else:
-            a_s, a_e = fa - 50, fa - 5
+            a_s, a_e = fa - 50.0, fa + 17.5
         en['g_mark'].circle = (0, 0, 18, a_s, a_e)
-
-        pts = en['g_pattern']
-        dots = en['g_dots']
+        pts, dots = en['g_pattern'], en['g_dots']
         for i in range(len(pts)):
             px, py = pts[i]
             if   dx == 0 and dy == 1:  rx, ry = px, py
@@ -589,18 +843,44 @@ class GameWorldBase(Widget):
             else:                      rx, ry = px, py
             dots[i].pos = (rx - DOT_RAD, ry - DOT_RAD)
 
-    def _make_enemy_dict(self, idx, en_state, saved, e_spawn=None):
-        dk = self.door_for_enemy.get(idx)
-        cid = self.door_color_id.get(dk, 0) if dk is not None else 0
-        mark_color = self.color_palette[cid] if self.color_palette else (1, 0, 0)
-        body_color = en_state.get('color', WALL_COLOR)
-        pattern_idx = en_state.get('pattern_idx', 0)
+    def _update_sleep_visual(self, en):
+        sleeping = en.get('sleep_counter', 0) > 0
+        alpha = SLEEP_ALPHA if sleeping else 1.0
+        en['body_color_inst'].a = alpha
+        en['mark_color_inst'].a = alpha
+        for dc in en.get('g_dot_colors', ()):
+            dc.a = alpha
 
-        egroup, translate, emark, edots, pattern = self._create_enemy_group(
-            pattern_idx, body_color, mark_color)
+    def _update_carrier_visual(self, en):
+        if en.get('is_carrier', False):
+            cid = en.get('color_id', 0)
+            dc = self.color_palette[cid] if 0 <= cid < len(self.color_palette) else WALL_COLOR
+            en['body_color_inst'].rgba = (dc[0], dc[1], dc[2], 1)
+            en['mark_color_inst'].rgba = (0, 0, 0, 1)
+            en['color'] = dc
+            en['mark_color'] = (0, 0, 0)
+        else:
+            en['body_color_inst'].rgba = (WALL_COLOR[0], WALL_COLOR[1], WALL_COLOR[2], 1)
+            cid = en.get('color_id', 0)
+            mc = self.color_palette[cid] if 0 <= cid < len(self.color_palette) else (1, 0, 0)
+            en['mark_color_inst'].rgba = (mc[0], mc[1], mc[2], 1)
+            en['color'] = WALL_COLOR
+            en['mark_color'] = mc
+        self._update_sleep_visual(en)
 
+    def _make_enemy_dict(self, idx, en_state, saved, e_spawn=None, color_id=0, is_carrier=False):
         if saved:
-            cur = en_state.get('current_cell', (int(en_state['grid_x']), int(en_state['grid_y'])))
+            is_carrier = en_state.get('is_carrier', False)
+            color_id = en_state.get('color_id', color_id)
+        mark_color = self.color_palette[color_id] if (self.color_palette and 0 <= color_id < len(self.color_palette)) else (1, 0, 0)
+        body_color = mark_color if is_carrier else WALL_COLOR
+        mcolor = (0, 0, 0) if is_carrier else mark_color
+        pattern_idx = en_state.get('pattern_idx', 0)
+        (egroup, translate, emark, edots, pattern,
+         body_inst, mark_inst, edot_colors) = \
+            self._create_enemy_group(pattern_idx, body_color, mcolor)
+        if saved:
+            cur = tuple(en_state.get('current_cell', (int(en_state['grid_x']), int(en_state['grid_y']))))
             nxt = tuple(en_state.get('next_cell', cur))
             pixel = Vector(en_state['pixel_x'], en_state['pixel_y'])
             direction = Vector(en_state['dir_x'], en_state['dir_y'])
@@ -614,35 +894,23 @@ class GameWorldBase(Widget):
             direction = VEC_ZERO
             last_dir = VEC_ZERO
             sleep_counter = 0
-
         translate.x = pixel.x + CELL_SIZE / 2
         translate.y = pixel.y + CELL_SIZE / 2
-
-        return {
-            'idx': idx,
-            'color': body_color,
-            'speed': en_state['speed'],
-            'pattern_idx': pattern_idx,
-            'turn_rule': en_state['turn_rule'],
-            'mark_color': mark_color,
-            'color_id': cid,
-            'grid': Vector(*cur),
-            'pixel': pixel,
-            'dir': direction,
-            'last_dir': last_dir,
-            'current_cell': cur,
-            'next_cell': nxt,
-            'g_group': egroup,
-            'g_translate': translate,
-            'g_mark': emark,
-            'g_dots': edots,
-            'g_pattern': pattern,
-            'sleep_counter': sleep_counter,
-            '_just_moved': False,
-            'last_drawn_dir': (None, None),
-            'is_visible': True,
-            'visible_cells': set(),
+        en_dict = {
+            'idx': idx, 'color': body_color, 'speed': en_state['speed'],
+            'pattern_idx': pattern_idx, 'turn_rule': en_state['turn_rule'],
+            'mark_color': mcolor, 'color_id': color_id, 'is_carrier': is_carrier,
+            'grid': Vector(*cur), 'pixel': pixel, 'dir': direction, 'last_dir': last_dir,
+            'current_cell': cur, 'next_cell': nxt,
+            'g_group': egroup, 'g_translate': translate, 'g_mark': emark,
+            'g_dots': edots, 'g_pattern': pattern, 'g_dot_colors': edot_colors,
+            'body_color_inst': body_inst, 'mark_color_inst': mark_inst,
+            'sleep_counter': sleep_counter, '_just_moved': False,
+            '_just_woke': False, 'pause_after_door': False,
+            'last_drawn_dir': (None, None), 'is_visible': True, 'visible_cells': set(),
         }
+        self._update_sleep_visual(en_dict)
+        return en_dict
 
     def _build_canvas(self):
         self.canvas.add(StencilPush())
@@ -660,7 +928,16 @@ class GameWorldBase(Widget):
         self.stencil_rect2 = Rectangle(pos=(0, 0), size=(100, 100))
         self.canvas.add(self.stencil_rect2)
         self.canvas.add(StencilPop())
-        self.ui_group = InstructionGroup(); self.canvas.add(self.ui_group)
+
+        self.hud_static_group = InstructionGroup(); self.canvas.add(self.hud_static_group)
+        self.hud_dynamic_group = InstructionGroup(); self.canvas.add(self.hud_dynamic_group)
+        self.hud_fps_group = InstructionGroup(); self.canvas.add(self.hud_fps_group)
+
+        self._hud_fps_color = Color(1, 1, 1, 1)
+        self._hud_fps_rect = Rectangle(pos=(-1000, -1000), size=(0, 0))
+        self.hud_fps_group.add(self._hud_fps_color)
+        self.hud_fps_group.add(self._hud_fps_rect)
+        self._last_fps_shown = None
 
         self.player_group = InstructionGroup()
         self.p_color_inst = Color(0, 1, 0.5)
@@ -668,19 +945,29 @@ class GameWorldBase(Widget):
         self.p_eye_color_inst = Color(0, 0, 0)
         self.p_left_eye_inst = Ellipse(size=(0, 0))
         self.p_right_eye_inst = Ellipse(size=(0, 0))
-        self.player_group.add(self.p_color_inst)
-        self.player_group.add(self.p_body_inst)
-        self.player_group.add(self.p_eye_color_inst)
-        self.player_group.add(self.p_left_eye_inst)
-        self.player_group.add(self.p_right_eye_inst)
+        self.p_compass_color = Color(0, 0, 0, 0)
+        self.p_compass_rect = Rectangle(pos=(-1000, -1000), size=(0, 0))
+        for i in (self.p_color_inst, self.p_body_inst,
+                  self.p_eye_color_inst, self.p_left_eye_inst, self.p_right_eye_inst,
+                  self.p_compass_color, self.p_compass_rect):
+            self.player_group.add(i)
         self.dynamic_group.add(self.player_group)
+        self.compass_dir = None
+
+        # Кэш цепочек обзора и кэш BFS-дистанции до цели компаса.
+        self._los_cache = {}
+        self._compass_cache = None
+
+        # Инструкции камеры создаются лениво и переиспользуются.
+        self._cam_translate = None
+        self._cam_scale = None
+        self._cam_offset = None
 
     def _load_save_data(self):
         app = App.get_running_app()
         slot = getattr(app, 'load_slot', 'last')
         self._loaded_from_prev = False
         self._locked_prev_path = None
-        path = None
         if slot == 'pre_last':
             path = get_second_latest_save_path()
             if path:
@@ -688,7 +975,6 @@ class GameWorldBase(Widget):
                 self._locked_prev_path = path
             else:
                 self._loaded_from_prev = True
-                self._locked_prev_path = None
                 return None
         else:
             path = get_latest_save_path()
@@ -703,79 +989,79 @@ class GameWorldBase(Widget):
             pass
         return None
 
-    def _compute_corridor_importance(self):
-        N = self.grid_w * self.grid_h
-        root = next(iter(self.adj_list.keys()))
-        parent = {root: None}
-        order, stack = [], [root]
-        while stack:
-            v = stack.pop()
-            order.append(v)
-            for u in self.adj_list[v]:
-                if u not in parent:
-                    parent[u] = v
-                    stack.append(u)
-        sub = {v: 1 for v in self.adj_list}
-        for v in reversed(order):
-            p = parent[v]
-            if p is not None:
-                sub[p] += sub[v]
-        importance = {v: 0.0 for v in self.adj_list}
-        for v in order:
-            p = parent[v]
-            if p is not None:
-                bw = float(sub[v]) * float(N - sub[v])
-                if bw > importance[v]: importance[v] = bw
-                if bw > importance[p]: importance[p] = bw
-        return importance
+    def _restore_union_visible_cells(self):
+        if not self.enemies:
+            self.union_visible_cells = set()
+            return
+        enemy_positions = {en['current_cell'] for en in self.enemies}
+        union_vis = set()
+        for en in self.enemies:
+            en['visible_cells'] = self.get_enemy_los(en, enemy_positions)
+            union_vis |= en['visible_cells']
+        self.union_visible_cells = union_vis
 
     def _assign_door_colors_spatially(self, all_doors, num_colors):
-        if num_colors <= 0 or not all_doors:
-            return {}
-        doors = sorted(all_doors)
-        n = len(doors)
-        if n == 1:
-            return {doors[0]: 0}
-        mids = [((a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5) for (a, b) in doors]
-        order = [0]
-        min_d2 = [-1.0] * n
-        x0, y0 = mids[0]
-        for i in range(n):
-            x, y = mids[i]
-            dx, dy = x - x0, y - y0
-            min_d2[i] = dx * dx + dy * dy
-        min_d2[0] = -1.0
-        for _ in range(n - 1):
-            best_i, best_d = 0, -1.0
-            for i in range(n):
-                if min_d2[i] > best_d:
-                    best_d, best_i = min_d2[i], i
-            order.append(best_i)
-            bx, by = mids[best_i]
-            for i in range(n):
-                if min_d2[i] >= 0:
-                    x, y = mids[i]
-                    dx, dy = x - bx, y - by
-                    d = dx * dx + dy * dy
-                    if d < min_d2[i]: min_d2[i] = d
-            min_d2[best_i] = -1.0
-        return {doors[di]: pos % num_colors for pos, di in enumerate(order)}
+        return _assign_door_colors_spatially_impl(all_doors, num_colors)
 
-    def _find_nearest_door(self, start):
-        if start in self.underlined_cells:
-            return None
-        visited = {start}
-        q = deque([start])
-        while q:
-            cur = q.popleft()
-            for nxt in self.adj_list[cur]:
-                if nxt in visited:
-                    continue
-                if nxt in self.underlined_cells:
-                    return (cur, nxt) if cur < nxt else (nxt, cur)
-                visited.add(nxt)
-                q.append(nxt)
-        return None
+    def _find_door_edge_for_de(self, de):
+        edge, _ = _find_door_edge_for_de_pure(self.maze_data, de)
+        return edge
+
+    def _compute_dead_end_doors(self):
+        door_edges = {}
+        for de in self.dead_ends_set:
+            edge = self._find_door_edge_for_de(de)
+            if edge is not None:
+                door_edges[de] = edge
+        return door_edges
+
+    def _prepare_door_data(self):
+        app = App.get_running_app()
+        pre_doors = None
+        pre_colors = None
+        if app is not None and app.pre_gen_data is not None:
+            pre_doors = app.pre_gen_data.get('door_edges')
+            pre_colors = app.pre_gen_data.get('door_colors')
+
+        if pre_doors is not None:
+            self.door_edges = pre_doors
+        else:
+            self.door_edges = self._compute_dead_end_doors()
+
+        self.doors = set(self.door_edges.values())
+        self.num_doors = len(self.doors)
+        self.num_colors = min(len(FIXED_DOOR_COLORS), max(1, self.num_doors)) if self.num_doors > 0 else 1
+        self.color_palette = list(FIXED_DOOR_COLORS[:self.num_colors])
+
+        valid = False
+        if isinstance(pre_colors, dict):
+            valid = True
+            for edge in self.doors:
+                cid = pre_colors.get(edge)
+                if cid is None or not (0 <= cid < self.num_colors):
+                    valid = False
+                    break
+
+        if valid:
+            self.door_color_id = pre_colors
+        else:
+            self.door_color_id = self._assign_door_colors_spatially(self.doors, self.num_colors)
+            try:
+                if app is not None and app.pre_gen_data is not None:
+                    app.pre_gen_data['door_colors'] = self.door_color_id
+            except Exception:
+                pass
+
+        self.door_counts = [0] * self.num_colors
+        for dk in self.doors:
+            cid = self.door_color_id.get(dk)
+            if cid is not None and 0 <= cid < self.num_colors:
+                self.door_counts[cid] += 1
+        self._door_counts_tuple = tuple(self.door_counts)
+
+        self.pocket_cells = set()
+        if app is not None and app.pre_gen_data is not None:
+            self.pocket_cells = set(app.pre_gen_data.get('pocket_cells', []))
 
     def get_occupied_cells(self, pixel_pos):
         eps = 1e-3
@@ -793,9 +1079,7 @@ class GameWorldBase(Widget):
         if cid is None:
             return self.cell_avails.get((x, y), [])
         d = self.cell_avails_by_color.get(cid)
-        if d is None:
-            return self.cell_avails.get((x, y), [])
-        return d.get((x, y), [])
+        return d.get((x, y), []) if d else self.cell_avails.get((x, y), [])
 
     def _has_adjacent_door(self, gx, gy):
         cell = (gx, gy)
@@ -811,14 +1095,11 @@ class GameWorldBase(Widget):
         free = []
         for d in av_all:
             tx, ty = gx + int(d.x), gy + int(d.y)
-            if (tx, ty) in occupied:
-                continue
-            if (tx, ty) in extra_blocked:
+            if (tx, ty) in occupied or (tx, ty) in extra_blocked:
                 continue
             free.append(d)
         if not free:
             return None
-
         cur_dir = en['dir']
         if cur_dir == VEC_ZERO:
             for pref in (Vector(0, 1), Vector(1, 0), Vector(0, -1), Vector(-1, 0)):
@@ -826,7 +1107,6 @@ class GameWorldBase(Widget):
                     return (gx + int(pref.x), gy + int(pref.y))
             d = free[0]
             return (gx + int(d.x), gy + int(d.y))
-
         dx, dy = int(cur_dir.x), int(cur_dir.y)
         right    = Vector(dy, -dx)
         straight = Vector(dx, dy)
@@ -846,9 +1126,7 @@ class GameWorldBase(Widget):
             active_enemies = self.enemies
         occupied = {en['current_cell'] for en in self.enemies}
         blocked = set()
-        intents = {en['idx']: self._compute_intent(en, occupied, blocked)
-                   for en in active_enemies}
-
+        intents = {en['idx']: self._compute_intent(en, occupied, blocked) for en in active_enemies}
         for _ in range(30):
             counts = {}
             for v in intents.values():
@@ -862,7 +1140,6 @@ class GameWorldBase(Widget):
             for en in active_enemies:
                 if intents[en['idx']] in newly_blocked:
                     intents[en['idx']] = self._compute_intent(en, occupied, blocked)
-
         counts = {}
         for v in intents.values():
             if v is not None:
@@ -891,88 +1168,183 @@ class GameWorldBase(Widget):
                         if not t_left: return dist
         return dist
 
-    def get_player_distances_and_btn(self, start_grid, targets):
-        dist = {start_grid: 0}
-        q = deque([start_grid])
-        t_left = set(targets)
-        min_btn = 9999
-        touched = self.touched_buttons
-        buttons = self.buttons
-
-        if start_grid in buttons and start_grid not in touched:
-            min_btn = 0
-
-        t_left.discard(start_grid)
-        if not t_left:
-            return dist, min_btn
-
-        while q:
-            cur = q.popleft()
-            d_next = dist[cur] + 1
-            for nxt in self.adj_list[cur]:
-                if nxt not in dist:
-                    dist[nxt] = d_next
-                    q.append(nxt)
-                    if nxt in buttons and nxt not in touched and d_next < min_btn:
-                        min_btn = d_next
-                    if nxt in t_left:
-                        t_left.discard(nxt)
-                        if not t_left:
-                            return dist, min_btn
-        return dist, min_btn
-
     def _refresh_player_dists(self):
+        start_cell = (int(self.player_grid.x), int(self.player_grid.y))
         targets = {self.hatch_pos}
         for en in self.enemies:
             targets.add(en['current_cell'])
-        targets.update(self.buttons.keys())
+        for pos in self.ground_buttons:
+            targets.add(pos)
+        self.player_dists = self.get_topological_distances(start_cell, targets)
+        self._refresh_button_distance()
 
-        self.player_dists, min_btn = self.get_player_distances_and_btn(
-            self.player_last_cell, targets)
-
-        if len(self.touched_buttons) >= len(self.buttons):
+    def _refresh_button_distance(self):
+        self.cached_btn_dist = None
+        self.cached_btn_color = None
+        if self.hatch_open:
             d = self.player_dists.get(self.hatch_pos, 9999)
-            self.cached_btn_dist = d if d != 9999 else None
-        else:
-            self.cached_btn_dist = min_btn if min_btn != 9999 else None
+            if d < 9999:
+                self.cached_btn_dist = d
+            return
+        if not self.ground_buttons:
+            return
+        min_d, min_color, tied = 9999, None, False
+        for pos, cid in self.ground_buttons.items():
+            d = self.player_dists.get(pos, 9999)
+            if d < min_d:
+                min_d, min_color, tied = d, cid, False
+            elif d == min_d:
+                tied = True
+        if min_d < 9999 and not tied:
+            self.cached_btn_dist = min_d
+            self.cached_btn_color = min_color
 
-    def get_enemy_los(self, en, enemy_positions):
-        visible = set()
-        ex, ey = en['current_cell']
-        edir = en['dir']
-        if edir == VEC_ZERO: return visible
-        dx, dy = int(edir.x), int(edir.y)
-        if dx == 0 and dy == 0: return visible
+    def _get_compass_target(self):
+        if self.hatch_open:
+            return self.hatch_pos
+        if self.ground_buttons:
+            min_d, target, tied = 9999, None, False
+            for pos in self.ground_buttons:
+                d = self.player_dists.get(pos, 9999)
+                if d < min_d:
+                    min_d, target, tied = d, pos, False
+                elif d == min_d:
+                    tied = True
+            if not tied and target is not None:
+                return target
+        min_d, target, tied = 9999, None, False
+        for en in self.enemies:
+            if not en.get('is_carrier', False):
+                continue
+            d = self.player_dists.get(en['current_cell'], 9999)
+            if d < min_d:
+                min_d, target, tied = d, en['current_cell'], False
+            elif d == min_d:
+                tied = True
+        if not tied and target is not None:
+            return target
+        return None
+
+    def _update_compass(self):
+        if not self.IS_LARGE:
+            self.compass_dir = None
+            return
+        target_cell = self._get_compass_target()
+        if target_cell is None:
+            self.compass_dir = None
+            return
+
+        cur_cell = (int(self.player_grid.x), int(self.player_grid.y))
+        if cur_cell == target_cell:
+            self.compass_dir = None
+            return
+
+        cache = self._compass_cache
+        if cache is None or cache[0] != target_cell:
+            cache = (target_cell, self.get_topological_distances(target_cell))
+            self._compass_cache = cache
+        dist_map = cache[1]
+
+        cur_d = dist_map.get(cur_cell, 999999)
+
+        best_d = cur_d
+        best_dir = None
+        for nb in self.adj_list.get(cur_cell, []):
+            d = dist_map.get(nb, 999999)
+            if d < best_d:
+                best_d = d
+                best_dir = (nb[0] - cur_cell[0], nb[1] - cur_cell[1])
+
+        self.compass_dir = best_dir
+
+    def _get_los_chain(self, ex, ey, dx, dy):
+        """Возвращает цепочку клеток вдоль направления обзора без учёта
+        других врагов. Кэшируется по (cell, dir) — цепочка статична,
+        т.к. зависит только от стен/дверей."""
+        key = (ex, ey, dx, dy)
+        chain = self._los_cache.get(key)
+        if chain is not None:
+            return chain
         ds = 'E' if dx == 1 else 'W' if dx == -1 else 'N' if dy == 1 else 'S'
+        chain = []
         cx, cy = ex, ey
         while True:
-            if self.maze_data[cy][cx][ds] == 1: break
+            if self.maze_data[cy][cx][ds] == 1:
+                break
             nx, ny = cx + dx, cy + dy
             a, b = (cx, cy), (nx, ny)
-            key = (a, b) if a < b else (b, a)
-            if key in self.doors: break
+            edge = (a, b) if a < b else (b, a)
+            if edge in self.doors:
+                break
             cx, cy = nx, ny
-            if (cx, cy) in enemy_positions: break
-            visible.add((cx, cy))
+            chain.append((cx, cy))
+        if len(self._los_cache) > 50000:
+            self._los_cache.clear()
+        self._los_cache[key] = chain
+        return chain
+
+    def get_enemy_los(self, en, enemy_positions):
+        if en.get('sleep_counter', 0) > 0 or en.get('_just_woke', False):
+            return set()
+        ex, ey = en['current_cell']
+        edir = en['dir']
+        if edir == VEC_ZERO:
+            return set()
+        dx, dy = int(edir.x), int(edir.y)
+        chain = self._get_los_chain(ex, ey, dx, dy)
+        if not chain:
+            return set()
+        visible = set()
+        for cell in chain:
+            if cell in enemy_positions:
+                break
+            visible.add(cell)
         return visible
 
     def _check_hatch_open(self, app):
         if self.hatch_open:
             return
-        if len(self.buttons) == 0:
-            return
-        if len(self.touched_buttons) >= len(self.buttons):
+        if self.collected_count >= BUTTONS_TO_OPEN:
             self.hatch_open = True
             if self.snd_hatch and not app.is_muted:
                 self.snd_hatch.play()
+
+    def _drop_button(self, en):
+        if not en.get('is_carrier', False):
+            return
+        pos = en['current_cell']
+        edge = self.door_edges.get(pos)
+        cid = self.door_color_id.get(edge, 0) if edge is not None else 0
+        self.ground_buttons[pos] = cid
+        en['is_carrier'] = False
+        self._update_carrier_visual(en)
+        self.interactive_redraw_needed = True
+
+    def _pickup_button(self, en):
+        if en.get('is_carrier', False):
+            return
+        pos = en['current_cell']
+        if pos not in self.ground_buttons:
+            return
+        del self.ground_buttons[pos]
+        en['is_carrier'] = True
+        self._update_carrier_visual(en)
+        self.interactive_redraw_needed = True
+
+    def _get_slept_pct(self):
+        total = len(self.enemies)
+        if total == 0:
+            return 0
+        return int(100 * (total - len(self.sleep_cycle_set)) / total)
 
     def save_game_state(self):
         enemies_state = []
         for en in self.enemies:
             enemies_state.append({
-                'idx': en['idx'], 'color': en['color'],
-                'speed': en['speed'], 'pattern_idx': en['pattern_idx'],
-                'turn_rule': en['turn_rule'], 'mark_color': en['mark_color'],
+                'idx': en['idx'], 'color': en['color'], 'speed': en['speed'],
+                'pattern_idx': en['pattern_idx'], 'turn_rule': en['turn_rule'],
+                'mark_color': en['mark_color'], 'color_id': en['color_id'],
+                'is_carrier': en['is_carrier'],
                 'grid_x': en['grid'].x, 'grid_y': en['grid'].y,
                 'pixel_x': en['pixel'].x, 'pixel_y': en['pixel'].y,
                 'dir_x': en['dir'].x, 'dir_y': en['dir'].y,
@@ -982,8 +1354,10 @@ class GameWorldBase(Widget):
             })
         state = {
             'version': self.SAVE_VERSION,
-            'touched_buttons': self.touched_buttons,
+            'collected_trophies': list(self.collected_trophies),
             'hatch_open': self.hatch_open,
+            'ground_buttons': dict(self.ground_buttons),
+            'full_sleep_cycles': self.full_sleep_cycles,
             'player_grid_x': self.player_grid.x, 'player_grid_y': self.player_grid.y,
             'p_pixel_x': self.p_pixel.x, 'p_pixel_y': self.p_pixel.y,
             'p_dir_x': self.p_dir.x, 'p_dir_y': self.p_dir.y,
@@ -993,53 +1367,177 @@ class GameWorldBase(Widget):
         }
         try:
             new_path = create_new_save_path()
-            with open(new_path, 'wb') as f:
-                pickle.dump(state, f)
-            if getattr(self, '_loaded_from_prev', False):
-                keep = [new_path]
-                if getattr(self, '_locked_prev_path', None):
-                    keep.append(self._locked_prev_path)
-                cleanup_except(keep)
-            else:
-                cleanup_old_saves(keep=2)
         except Exception:
-            pass
+            return
 
-    def _draw_text(self, text, x, y, font_size):
+        loaded_prev = getattr(self, '_loaded_from_prev', False)
+        locked_prev = getattr(self, '_locked_prev_path', None)
+
+        def _do_save(path, st, lp, lprev):
+            tmp_path = path + '.tmp'
+            try:
+                with open(tmp_path, 'wb') as f:
+                    pickle.dump(st, f)
+                os.replace(tmp_path, path)
+                if lprev:
+                    keep = [path]
+                    if lp:
+                        keep.append(lp)
+                    cleanup_except(keep)
+                else:
+                    cleanup_old_saves(keep=2)
+            except Exception:
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except OSError:
+                    pass
+
+        threading.Thread(target=_do_save,
+                         args=(new_path, state, locked_prev, loaded_prev),
+                         daemon=True).start()
+
+    def _draw_text(self, text, x, y, font_size, group=None):
+        if group is None:
+            group = self.hud_dynamic_group
         tex = get_text_texture(text, font_size)
-        self.ui_group.add(Color(1, 1, 1, 1))
-        self.ui_group.add(Rectangle(texture=tex, pos=(x, y - tex.size[1] / 2), size=tex.size))
+        group.add(Color(1, 1, 1, 1))
+        group.add(Rectangle(texture=tex, pos=(x, y - tex.size[1] / 2), size=tex.size))
         return tex.size[0]
 
-    def _draw_text_colored(self, text, x, y, font_size, rgb):
+    def _draw_text_colored(self, text, x, y, font_size, rgb, group=None):
+        if group is None:
+            group = self.hud_dynamic_group
         tex = get_text_texture(text, font_size)
-        self.ui_group.add(Color(rgb[0], rgb[1], rgb[2], 1))
-        self.ui_group.add(Rectangle(texture=tex, pos=(x, y - tex.size[1] / 2), size=tex.size))
+        group.add(Color(rgb[0], rgb[1], rgb[2], 1))
+        group.add(Rectangle(texture=tex, pos=(x, y - tex.size[1] / 2), size=tex.size))
         return tex.size[0]
 
-    def _draw_labeled_colored(self, label, total, counts, palette, x, y, fs):
-        w = self._draw_text(label, x, y, fs); x += w + 6
-        w = self._draw_text(str(total), x, y, fs); x += w + 4
-        w = self._draw_text("(", x, y, fs); x += w + 2
-        for i, cnt in enumerate(counts):
-            if i > 0:
-                w = self._draw_text(",", x, y, fs); x += w + 3
-            rgb = palette[i] if i < len(palette) else (1, 1, 1)
-            w = self._draw_text_colored(str(cnt), x, y, fs, rgb); x += w + 3
-        w = self._draw_text(")", x, y, fs); x += w
-        return x
+    def _draw_trophy_board(self, trophy_top_y, icon_r, group=None):
+        if group is None:
+            group = self.hud_static_group
+        trophy_cell = icon_r * TROPHY_CELL_MULT
+        trophy_gap = icon_r * TROPHY_GAP_MULT
+        board_w = 5 * trophy_cell + 4 * trophy_gap
+        base_x = (self.width - board_w) / 2.0
+        trophy_y = trophy_top_y - trophy_cell
+        for i in range(5):
+            x = base_x + i * (trophy_cell + trophy_gap)
+            scx = x + trophy_cell / 2
+            scy = trophy_y + trophy_cell / 2
+            if i < len(self.collected_trophies):
+                cid = self.collected_trophies[i]
+                rgb = self.color_palette[cid] if 0 <= cid < len(self.color_palette) else (0.5, 0.5, 0.5)
+                _draw_star(group, scx, scy, trophy_cell, rgb)
+            else:
+                _draw_star_outline(group, scx, scy, trophy_cell,
+                                   (0.25, 0.25, 0.25, 0.7))
+
+    def _draw_hatch_icon(self, cx, cy, size, group=None):
+        if group is None:
+            group = self.hud_dynamic_group
+        r = size / 2
+        group.add(Color(0.15, 0.15, 0.15, 1))
+        group.add(Ellipse(pos=(cx - r, cy - r), size=(size, size)))
+        group.add(Color(0, 1, 0.5, 1))
+        group.add(Line(circle=(cx, cy, r * 0.85), width=max(1.5, r * 0.15)))
+
+    def _draw_floppy(self, cx, cy, size, digit=None, group=None):
+        if group is None:
+            group = self.hud_dynamic_group
+        h = size / 2.0
+        x0, y0 = cx - h, cy - h
+        group.add(Color(0.28, 0.35, 0.5, 1))
+        group.add(Rectangle(pos=(x0, y0), size=(size, size)))
+        sw, sh = size * 0.35, size * 0.14
+        group.add(Color(0.75, 0.78, 0.85, 1))
+        group.add(Rectangle(pos=(cx - sw / 2, y0 + size - sh - size * 0.06), size=(sw, sh)))
+        lw, lh = size * 0.62, size * 0.36
+        group.add(Color(0.92, 0.92, 0.88, 1))
+        group.add(Rectangle(pos=(cx - lw / 2, y0 + size * 0.08), size=(lw, lh)))
+        group.add(Color(0.12, 0.16, 0.24, 1))
+        group.add(Line(rectangle=(x0, y0, size, size), width=1.2))
+        cut = size * 0.22
+        group.add(Line(points=[x0 + size - cut, y0 + size, x0 + size, y0 + size - cut], width=2))
+        if digit is not None:
+            label_cy = y0 + size * 0.08 + lh / 2
+            digit_fs = max(1, int(lh * 0.95))
+            tex = get_text_texture(str(digit), digit_fs)
+            group.add(Color(0, 0, 0, 1))
+            group.add(Rectangle(texture=tex,
+                                pos=(cx - tex.size[0] / 2, label_cy - tex.size[1] / 2),
+                                size=tex.size))
+
+    def _draw_autosave_counter(self, y_center, x_center=None, group=None):
+        if group is None:
+            group = self.hud_dynamic_group
+        f_size = self.f_size
+        digit = getattr(self, '_autosave_digit', None)
+        icon_size = max(14, f_size * 1.4)
+        icon_size = int(icon_size * 0.8)
+        cycles_str = str(self.full_sleep_cycles)
+        pct_str = f"{self._get_slept_pct()}%"
+        cyc_tex = get_text_texture(cycles_str, f_size)
+        pct_tex = get_text_texture(pct_str, f_size)
+        total_w = cyc_tex.size[0] + 6 + icon_size + 6 + pct_tex.size[0]
+        if x_center is None:
+            x_center = self.width / 2.0
+        base_x = x_center - total_w / 2.0
+        self._draw_text(cycles_str, base_x, y_center, f_size, group=group)
+        fx = base_x + cyc_tex.size[0] + 6
+        self._draw_floppy(fx + icon_size / 2, y_center, icon_size, digit=digit, group=group)
+        self._draw_text(pct_str, fx + icon_size + 6, y_center, f_size, group=group)
+
+    def _update_hud_fps(self):
+        if not hasattr(self, '_hud_fps_rect') or not hasattr(self, 'f_size'):
+            return
+        fps_val = int(Clock.get_fps())
+        fps_rounded = (fps_val // 5) * 5
+        if self._last_fps_shown == fps_rounded:
+            return
+        self._last_fps_shown = fps_rounded
+        sw, sh = self.width, self.height
+        is_landscape = (sw > sh)
+        f_size = self.f_size
+        fps_text = f"FPS {fps_rounded}"
+        fps_tex = get_text_texture(fps_text, f_size)
+        if not is_landscape:
+            if not hasattr(self, 'maze_top'):
+                return
+            row_h = self.row_h
+            top_row_cy = self.maze_top + self.hud_h - row_h / 2
+            btn_sz = max(60, min(120, int(sw / 8)))
+            fps_x = sw - btn_sz - 15 - fps_tex.size[0] - 10
+            self._hud_fps_rect.pos = (fps_x, top_row_cy - fps_tex.size[1] / 2)
+        else:
+            row_h = self.row_h
+            left_w = max(160, int(sh * 0.38))
+            cx = left_w / 2.0
+            fps_y = sh - 25 - row_h * 1.2 * 2
+            self._hud_fps_rect.pos = (cx - fps_tex.size[0] / 2, fps_y - fps_tex.size[1] / 2)
+        self._hud_fps_rect.size = fps_tex.size
+        self._hud_fps_rect.texture = fps_tex
 
     def enemy_tick(self):
         app = App.get_running_app()
-
         was_sleeping = set()
         for en in self.enemies:
             sc = en.get('sleep_counter', 0)
             if sc > 0:
                 was_sleeping.add(id(en))
                 en['sleep_counter'] = sc - 1
-                en['dir'] = VEC_ZERO
                 en['next_cell'] = en['current_cell']
+                en['_just_woke'] = (sc == 1)
+                if sc == 1:
+                    self._update_sleep_visual(en)
+                    if en['last_dir'] != VEC_ZERO:
+                        en['dir'] = Vector(en['last_dir'].x, en['last_dir'].y)
+                    else:
+                        en['dir'] = VEC_ZERO
+                else:
+                    en['dir'] = VEC_ZERO
+            else:
+                en['_just_woke'] = False
         any_sleeping = len(was_sleeping) > 0
 
         for en in self.enemies:
@@ -1050,49 +1548,62 @@ class GameWorldBase(Widget):
             en['current_cell'] = en['next_cell']
             en['grid'] = Vector(*en['current_cell'])
             en['_just_moved'] = (old != en['current_cell'])
+            if en['_just_moved']:
+                key = (old, en['current_cell']) if old < en['current_cell'] else (en['current_cell'], old)
+                en['pause_after_door'] = (key in self.doors)
+            else:
+                en['pause_after_door'] = False
 
         enemy_positions = {en['current_cell'] for en in self.enemies}
 
-        newly_sleeping = set()
-        if not any_sleeping and self.sleep_cycle_set:
-            candidates = []
-            for en in self.enemies:
-                if id(en) in was_sleeping:
-                    continue
-                if en['current_cell'] not in self.dead_ends_set:
-                    continue
-                if en['idx'] not in self.sleep_cycle_set:
-                    continue
-                candidates.append(en)
-            if candidates:
-                candidates.sort(key=lambda e: e['idx'])
-                chosen = candidates[0]
-                chosen['sleep_counter'] = 3
-                chosen['dir'] = VEC_ZERO
-                chosen['next_cell'] = chosen['current_cell']
-                chosen['_just_moved'] = True
-                self.sleep_cycle_set.discard(chosen['idx'])
-                if not self.sleep_cycle_set:
-                    self.sleep_cycle_set = set(e['idx'] for e in self.enemies)
-                was_sleeping.add(id(chosen))
-                newly_sleeping.add(id(chosen))
+        pre_sleep_active = [en for en in self.enemies if id(en) not in was_sleeping]
+        intent_active = [en for en in pre_sleep_active
+                         if not en.get('pause_after_door', False)]
+        intents = self._resolve_enemy_intents(intent_active)
 
-        active_enemies = [en for en in self.enemies if id(en) not in was_sleeping]
-        intents = self._resolve_enemy_intents(active_enemies)
+        cycle_completed = False
+        if not any_sleeping and self.sleep_cycle_set:
+            reverse_order = (self.full_sleep_cycles % 2 == 1)
+            ordered = sorted(self.sleep_cycle_set, reverse=reverse_order)
+            if ordered:
+                next_idx = ordered[0]
+                chosen = None
+                for en in pre_sleep_active:
+                    if en['idx'] == next_idx:
+                        chosen = en
+                        break
+                if chosen is not None:
+                    chosen['sleep_counter'] = 2
+                    chosen['dir'] = VEC_ZERO
+                    chosen['next_cell'] = chosen['current_cell']
+                    chosen['_just_moved'] = True
+                    chosen['pause_after_door'] = False
+                    self._update_sleep_visual(chosen)
+                    self.sleep_cycle_set.discard(chosen['idx'])
+                    if not self.sleep_cycle_set:
+                        self.sleep_cycle_set = set(e['idx'] for e in self.enemies)
+                        self.full_sleep_cycles += 1
+                        cycle_completed = True
+                    was_sleeping.add(id(chosen))
 
         union_vis = set()
         for en in self.enemies:
             if id(en) not in was_sleeping:
-                tgt = intents.get(en['idx'])
-                if tgt is None or tgt == en['current_cell']:
-                    en['dir'] = VEC_ZERO
+                if en.get('pause_after_door', False):
                     en['next_cell'] = en['current_cell']
+                    en['pause_after_door'] = False
                 else:
-                    new_dir = Vector(tgt[0] - en['current_cell'][0],
-                                     tgt[1] - en['current_cell'][1])
-                    en['dir'] = new_dir
-                    en['last_dir'] = new_dir
-                    en['next_cell'] = tgt
+                    tgt = intents.get(en['idx'])
+                    if tgt is None:
+                        en['next_cell'] = en['current_cell']
+                    elif tgt == en['current_cell']:
+                        en['dir'] = VEC_ZERO
+                        en['next_cell'] = en['current_cell']
+                    else:
+                        new_dir = Vector(tgt[0] - en['current_cell'][0], tgt[1] - en['current_cell'][1])
+                        en['dir'] = new_dir
+                        en['last_dir'] = new_dir
+                        en['next_cell'] = tgt
             en['visible_cells'] = self.get_enemy_los(en, enemy_positions)
             union_vis |= en['visible_cells']
 
@@ -1107,21 +1618,52 @@ class GameWorldBase(Widget):
                 app.root.get_screen('game').show_overlay('lose')
                 return
 
+        just_dropped_ids = set()
+        for en in self.enemies:
+            if not en.get('is_carrier', False):
+                continue
+            if en.get('sleep_counter', 0) > 0:
+                continue
+            if en['idx'] in self.sleep_cycle_set:
+                continue
+            if en['current_cell'] not in self.dead_ends_set:
+                continue
+            self._drop_button(en)
+            just_dropped_ids.add(id(en))
+
+        for en in self.enemies:
+            if id(en) in was_sleeping:
+                continue
+            if not en.get('_just_moved', False):
+                continue
+            if en.get('is_carrier', False):
+                continue
+            if id(en) in just_dropped_ids:
+                continue
+            if en['current_cell'] in self.ground_buttons:
+                self._pickup_button(en)
+                self._refresh_player_dists()
+                self._update_compass()
+
         self.enemy_tick_counter += 1
+
+        if cycle_completed and (self.full_sleep_cycles % self._autosave_every_n == 0):
+            self.save_game_state()
+            self._flash_checkpoint()
+            if self.snd_checkpoint and not app.is_muted:
+                self.snd_checkpoint.play()
 
     def update(self, dt):
         if not self.active: return
         app = App.get_running_app()
         self.time_accumulator = min(self.time_accumulator + dt, 0.25)
         sub_steps, state_dirty = 0, False
-        gx, gy = int(self.player_grid.x), int(self.player_grid.y)
 
         while self.time_accumulator >= self.dt_step and sub_steps < 3:
             self.time_accumulator -= self.dt_step
             self.logic_steps += 1
             sub_steps += 1
             if not self.active: break
-            just_colored = False
             self.last_p_cells = self.get_occupied_cells(self.p_pixel)
 
             if len(self.last_p_cells) == 1:
@@ -1155,35 +1697,25 @@ class GameWorldBase(Widget):
             if dxt * dxt + dyt * dyt <= self.p_speed ** 2:
                 self.p_pixel = Vector(target)
                 gx, gy = int(self.player_grid.x), int(self.player_grid.y)
+                just_picked = False
                 if self.player_last_cell != (gx, gy):
                     self.player_last_cell = (gx, gy)
                     recalc_dists = True
                     redraw_int = False
-
-                    if (gx, gy) in self.buttons and (gx, gy) not in self.touched_buttons \
-                            and self.buttons[(gx, gy)]['collectible']:
-                        self.touched_buttons.add((gx, gy))
-                        just_colored = True
-                        state_dirty = True
-                        redraw_int = True
+                    if (gx, gy) in self.ground_buttons:
+                        cid = self.ground_buttons.pop((gx, gy))
+                        self.collected_trophies.append(cid)
+                        self.collected_count += 1
+                        state_dirty, redraw_int, just_picked = True, True, True
+                        if self.snd_pickup and not app.is_muted:
+                            self.snd_pickup.play()
                         self._check_hatch_open(app)
-                        will_autosave = (len(self.touched_buttons) % self.autosave_every == 0)
-                        if will_autosave:
-                            self.save_game_state()
-                            if self.snd_checkpoint and not app.is_muted:
-                                self.snd_checkpoint.play()
-                            self._flash_checkpoint()
-                        else:
-                            if self.snd_color and not app.is_muted:
-                                self.snd_color.play()
-
                     if redraw_int:
                         if self.IS_LARGE:
                             if self.last_drawn_chunk is not None:
                                 self.draw_interactive(*self.last_drawn_chunk)
                         else:
                             self.interactive_redraw_needed = True
-
                     if self.hatch_open and (gx, gy) == self.hatch_pos:
                         self.active = False
                         if self.snd_joy and not app.is_muted: self.snd_joy.play()
@@ -1207,22 +1739,14 @@ class GameWorldBase(Widget):
                 self.next_dir = None
 
                 if self.p_dir != VEC_ZERO:
-                    ngx = gx + int(self.p_dir.x)
-                    ngy = gy + int(self.p_dir.y)
+                    ngx, ngy = gx + int(self.p_dir.x), gy + int(self.p_dir.y)
                     target_cell = (ngx, ngy)
-                    if self.enemy_step_interval > 0:
-                        prog = max(0.0, min(1.0, self.enemy_time / self.enemy_step_interval))
-                    else:
-                        prog = 1.0
+                    prog = max(0.0, min(1.0, self.enemy_time / self.enemy_step_interval)) if self.enemy_step_interval > 0 else 1.0
                     blocked = False
                     for en in self.enemies:
-                        cc = en['current_cell']
-                        nc = en['next_cell']
+                        cc, nc = en['current_cell'], en['next_cell']
                         if cc == target_cell:
-                            if nc == target_cell:
-                                blocked = True
-                                break
-                            if prog < 0.3:
+                            if nc == target_cell or prog < 0.3:
                                 blocked = True
                                 break
                         elif nc == target_cell:
@@ -1232,17 +1756,19 @@ class GameWorldBase(Widget):
                         self.p_dir = VEC_ZERO
                         self.next_dir = None
 
-                if was_moving and self.p_dir == VEC_ZERO and not just_colored \
-                        and self.snd_stop and not app.is_muted:
+                if was_moving and self.p_dir == VEC_ZERO and not just_picked and self.snd_stop and not app.is_muted:
                     self.snd_stop.play()
                 if self.p_dir != VEC_ZERO:
                     self.last_p_dir = Vector(self.p_dir)
                     self.player_grid += self.p_dir
+                    self._refresh_player_dists()
+                    self._update_compass()
             else:
                 self.p_pixel += (target - self.p_pixel).normalize() * self.p_speed
 
             if recalc_dists:
                 self._refresh_player_dists()
+                self._update_compass()
                 state_dirty = True
 
         if sub_steps >= 3:
@@ -1256,8 +1782,7 @@ class GameWorldBase(Widget):
             self.enemy_tick()
             ticked = True
             if not self.active:
-                gx2 = int(self.player_grid.x)
-                gy2 = int(self.player_grid.y)
+                gx2, gy2 = int(self.player_grid.x), int(self.player_grid.y)
                 if self.IS_LARGE:
                     self.draw_entities(gx2, gy2)
                 else:
@@ -1265,7 +1790,6 @@ class GameWorldBase(Widget):
                 return
 
         gx, gy = int(self.player_grid.x), int(self.player_grid.y)
-
         if self.IS_LARGE:
             if self.last_drawn_chunk != (gx, gy):
                 self.last_drawn_chunk = (gx, gy)
@@ -1289,8 +1813,7 @@ class GameWorldBase(Widget):
 
     def _draw_player_eyes(self):
         self.p_body_inst.pos = (self.p_pixel.x, self.p_pixel.y)
-        pcx = self.p_pixel.x + CELL_SIZE / 2
-        pcy = self.p_pixel.y + CELL_SIZE / 2
+        pcx, pcy = self.p_pixel.x + CELL_SIZE / 2, self.p_pixel.y + CELL_SIZE / 2
         dx, dy = self.last_p_dir.x, self.last_p_dir.y
         ef, es, er = 10, 6, 3
         lx, ly = pcx + dx * ef - dy * es, pcy + dy * ef + dx * es
@@ -1300,77 +1823,74 @@ class GameWorldBase(Widget):
         self.p_right_eye_inst.pos = (rx - er, ry - er)
         self.p_right_eye_inst.size = (er * 2, er * 2)
 
-
-class GameWorld20(GameWorldBase):
-    SAVE_VERSION = 10
-    IS_LARGE = False
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.active = True
-        self.maze_scale = 1.0
-        self.maze_top = 0.0
-        self.maze_bottom = 0.0
-        self.time_accumulator = 0.0
-        self.logic_steps = 0
-        self.dt_step = 1.0 / 60.0
-        self.autosave_every = 2
-        self._init_sounds()
-        self.union_visible_cells = set()
-
-        app = App.get_running_app()
-        data = app.pre_gen_data
-        self.maze_data = data['grid']
-        self.grid_w, self.grid_h = MAZE_W, MAZE_H
-        self.target_de = data['target_de']
-        self.level = data.get('level', 1)
-
-        self.adj_list = {(x, y): [(x + dx, y + dy) for d, (dx, dy) in DIRS.items()
-                                  if self.maze_data[y][x][d] == 0]
-                         for y in range(self.grid_h) for x in range(self.grid_w)}
-
-        self.corridor_importance = self._compute_corridor_importance()
-        imp_vals = list(self.corridor_importance.values())
-        if imp_vals:
-            logs = sorted(math.log(v + 1.0) for v in imp_vals)
-            self.imp_threshold = logs[min(len(logs) - 1, int(len(logs) * 0.8))]
+        if self.IS_LARGE:
+            cd = getattr(self, 'compass_dir', None)
+            if cd is not None:
+                cdx, cdy = cd
+                r = CELL_SIZE / 2.0
+                marker_size = 10
+                marker_thick = 4
+                if cdx == 0 and cdy == 1:
+                    mx, my = pcx - marker_size/2, pcy + r - marker_thick
+                    mw, mh = marker_size, marker_thick
+                elif cdx == 0 and cdy == -1:
+                    mx, my = pcx - marker_size/2, pcy - r
+                    mw, mh = marker_size, marker_thick
+                elif cdx == 1 and cdy == 0:
+                    mx, my = pcx + r - marker_thick, pcy - marker_size/2
+                    mw, mh = marker_thick, marker_size
+                elif cdx == -1 and cdy == 0:
+                    mx, my = pcx - r, pcy - marker_size/2
+                    mw, mh = marker_thick, marker_size
+                else:
+                    mx, my, mw, mh = -1000, -1000, 0, 0
+                self.p_compass_color.rgba = (0, 0, 0, 1)
+                self.p_compass_rect.pos = (mx, my)
+                self.p_compass_rect.size = (mw, mh)
+            else:
+                self.p_compass_color.a = 0.0
         else:
-            self.imp_threshold = 0.0
+            self.p_compass_color.a = 0.0
 
-        self.dead_ends_set = set(data.get('dead_ends', []))
-        self.dead_end_positions = data.get('dead_end_positions', {})
-        self.underlined_cells = {v for v, imp in self.corridor_importance.items()
-                                 if v not in self.dead_ends_set
-                                 and math.log(imp + 1.0) >= self.imp_threshold}
+    def _pick_balanced_spawns(self, num_per_color, max_colors=5):
+        by_color = {}
+        center_dist = self.get_topological_distances(self.hatch_pos)
+        for de in self.dead_ends_set:
+            edge = self.door_edges.get(de)
+            if edge is None:
+                continue
+            cid = self.door_color_id.get(edge)
+            if cid is None or cid >= max_colors:
+                continue
+            by_color.setdefault(cid, []).append(de)
+        if not by_color:
+            return []
+        min_avail = min(len(lst) for lst in by_color.values())
+        n = min(num_per_color, min_avail)
+        if n <= 0:
+            return []
+        all_picks = []
+        for cid in sorted(by_color.keys()):
+            des = by_color[cid]
+            des_sorted = sorted(des, key=lambda d: (-center_dist.get(d, 0), d))
+            picked = des_sorted[:n]
+            for p in picked:
+                all_picks.append((p, cid, center_dist.get(p, 0)))
 
-        self.doors = set()
-        for cell in self.underlined_cells:
-            for nb in self.adj_list[cell]:
-                if nb in self.underlined_cells: continue
-                self.doors.add((cell, nb) if cell < nb else (nb, cell))
+        final_picks = []
+        neighbor_counts = {}
+        for (pos, cid, dist) in all_picks:
+            temp = dict(neighbor_counts)
+            for nb in self.adj_list.get(pos, []):
+                temp[nb] = temp.get(nb, 0) + 1
+            if any(c > 2 for c in temp.values()):
+                continue
+            final_picks.append((pos, cid, dist))
+            for nb in self.adj_list.get(pos, []):
+                neighbor_counts[nb] = neighbor_counts.get(nb, 0) + 1
+        return final_picks
 
-        e_spawns = data['e_spawns']
-        self.door_for_enemy = {}
-        for idx in sorted(e_spawns.keys()):
-            dk = self._find_nearest_door(tuple(e_spawns[idx])) or ('orphan', idx)
-            self.door_for_enemy[idx] = dk
-        n_unique = len(set(self.door_for_enemy.values()))
-        self.num_colors = min(len(FIXED_DOOR_COLORS), n_unique) if n_unique > 0 else 0
-        self.num_doors = len(self.doors)
-        self.color_palette = list(FIXED_DOOR_COLORS[:self.num_colors])
-        self.door_color_id = self._assign_door_colors_spatially(self.doors, self.num_colors)
-        self.door_counts = [0] * self.num_colors
-        for dk in self.doors:
-            cid = self.door_color_id.get(dk)
-            if cid is not None and 0 <= cid < self.num_colors:
-                self.door_counts[cid] += 1
-        self._door_counts_tuple = tuple(self.door_counts)
-
-        self.p_speed = 1
-        self.buttons = data['buttons']
-        p_spawn = data['p_spawn']
-        self.hatch_pos = tuple(p_spawn)
-
+    def _prepare_cell_avails(self):
         self.cell_avails = {(x, y): [Vector(v) for d, v in DIRS.items() if self.maze_data[y][x][d] == 0]
                             for y in range(self.grid_h) for x in range(self.grid_w)}
         self.cell_avails_by_color = {}
@@ -1387,6 +1907,55 @@ class GameWorld20(GameWorldBase):
                 dd[cell] = filtered
             self.cell_avails_by_color[cid] = dd
 
+
+def _compute_from_cell(player_grid, p_dir, grid_w, grid_h):
+    fx = int(player_grid.x - p_dir.x)
+    fy = int(player_grid.y - p_dir.y)
+    if 0 <= fx < grid_w and 0 <= fy < grid_h:
+        return (fx, fy)
+    return (int(player_grid.x), int(player_grid.y))
+
+
+class GameWorldStatic(GameWorldBase):
+    SAVE_VERSION = 3
+    GRID_W = MAZE_W
+    GRID_H = MAZE_H
+    WORLD_DIM = MAZE_WORLD_DIM
+    WORLD_CX = MAZE_WORLD_CX
+    MAX_ENEMIES = NUM_ENEMIES
+    PATTERN_POOL = None
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.active = True
+        self.maze_scale = 1.0
+        self.maze_top = 0.0
+        self.maze_bottom = 0.0
+        self.time_accumulator = 0.0
+        self.logic_steps = 0
+        self.dt_step = 1.0 / 60.0
+        self._init_sounds()
+        self.union_visible_cells = set()
+
+        app = App.get_running_app()
+        data = app.pre_gen_data
+        self.maze_data = data['grid']
+        self.grid_w, self.grid_h = self.GRID_W, self.GRID_H
+        self.level = data.get('level', 1)
+
+        self.adj_list = {(x, y): [(x + dx, y + dy) for d, (dx, dy) in DIRS.items()
+                                  if self.maze_data[y][x][d] == 0]
+                         for y in range(self.grid_h) for x in range(self.grid_w)}
+        self.dead_ends_set = set(data.get('dead_ends', []))
+        self.target_de = len(self.dead_ends_set)
+
+        self._prepare_door_data()
+        self._prepare_cell_avails()
+
+        self.p_speed = 1
+        p_spawn = data['p_spawn']
+        self.hatch_pos = tuple(p_spawn)
+
         self._build_canvas()
         self.level_group = InstructionGroup()
         self.canvas.add(self.level_group)
@@ -1395,11 +1964,17 @@ class GameWorld20(GameWorldBase):
         self.enemies = []
         save_data = self._load_save_data()
         self.hatch_open = False
-        self.touched_buttons = set()
+        self.collected_trophies = []
+        self.collected_count = 0
+        self.ground_buttons = {}
+        self.full_sleep_cycles = 0
 
         if save_data:
-            self.hatch_open = save_data['hatch_open']
-            self.touched_buttons = save_data.get('touched_buttons', set())
+            self.hatch_open = save_data.get('hatch_open', False)
+            self.collected_trophies = list(save_data.get('collected_trophies', []))
+            self.collected_count = len(self.collected_trophies)
+            self.ground_buttons = dict(save_data.get('ground_buttons', {}))
+            self.full_sleep_cycles = int(save_data.get('full_sleep_cycles', 0))
             self.player_grid = Vector(save_data['player_grid_x'], save_data['player_grid_y'])
             self.p_pixel = Vector(save_data['p_pixel_x'], save_data['p_pixel_y'])
             self.p_dir = Vector(save_data['p_dir_x'], save_data['p_dir_y'])
@@ -1414,14 +1989,28 @@ class GameWorld20(GameWorldBase):
             self.p_dir = VEC_ZERO
             self.last_p_dir = Vector(0, 1)
 
-            for slot_idx, (_, e_spawn) in enumerate(sorted(e_spawns.items())):
-                if slot_idx >= 20: break
-                pat_idx = PATTERN_INDICES_20[slot_idx % len(PATTERN_INDICES_20)]
-                rule = 'right' if slot_idx % 2 == 0 else 'left'
-                prof = {'pattern_idx': pat_idx, 'turn_rule': rule,
-                        'speed': 0.5, 'color': WALL_COLOR}
-                self.enemies.append(self._make_enemy_dict(
-                    slot_idx, prof, saved=False, e_spawn=e_spawn))
+            num_per_color = max(1, self.MAX_ENEMIES // self.num_colors)
+            picks = self._pick_balanced_spawns(num_per_color, max_colors=self.num_colors)
+            by_color = {}
+            for (pos, cid, dist) in picks:
+                by_color.setdefault(cid, []).append((pos, dist))
+            for cid in by_color:
+                by_color[cid].sort(key=lambda x: -x[1])
+
+            pools_by_color = self.PATTERN_POOL or [list(range(len(DOT_PATTERNS))) for _ in range(5)]
+            slot_idx = 0
+            for cid in sorted(by_color.keys()):
+                color_pool = pools_by_color[cid] if cid < len(pools_by_color) else pools_by_color[0]
+                for i, (pos, dist) in enumerate(by_color[cid]):
+                    rule = 'right' if i % 2 == 0 else 'left'
+                    is_carrier = (i == 0)
+                    pat_idx = color_pool[i % len(color_pool)] if color_pool else 0
+                    prof = {'pattern_idx': pat_idx, 'turn_rule': rule,
+                            'speed': 0.5, 'color': WALL_COLOR}
+                    self.enemies.append(self._make_enemy_dict(
+                        slot_idx, prof, saved=False, e_spawn=pos,
+                        color_id=cid, is_carrier=is_carrier))
+                    slot_idx += 1
 
             self.sleep_cycle_set = set(e['idx'] for e in self.enemies)
 
@@ -1437,16 +2026,20 @@ class GameWorld20(GameWorldBase):
         self.enemy_time = save_data.get('enemy_time', 0.0) if save_data else self.enemy_step_interval
         self.enemy_tick_counter = 0
         self.next_dir = None
-        self.player_last_cell = (int(self.player_grid.x), int(self.player_grid.y))
+        self.player_last_cell = _compute_from_cell(self.player_grid, self.p_dir,
+                                                  self.grid_w, self.grid_h)
         self._refresh_player_dists()
+        self._update_compass()
 
-        if not self.hatch_open and len(self.touched_buttons) >= len(self.buttons) \
-                and len(self.buttons) > 0:
+        if not self.hatch_open and self.collected_count >= BUTTONS_TO_OPEN:
             self.hatch_open = True
 
         self.current_joy_dir = None
         self.last_p_cells = self.get_occupied_cells(self.p_pixel)
         self.interactive_redraw_needed = False
+
+        if save_data:
+            self._restore_union_visible_cells()
 
         self.bind(size=self.trigger_static_redraw, pos=self.trigger_static_redraw)
         self._update_event = Clock.schedule_interval(self.update, 1 / 60.0)
@@ -1455,42 +2048,59 @@ class GameWorld20(GameWorldBase):
         sw, sh = self.width, self.height
         if sw <= 0 or sh <= 0:
             return
-
-        f_size = max(14, int(sw / 40))
-        row_h = int(f_size * 1.8)
-        hud_h = row_h * 4
-
-        maze_size = sw
-        maze_top = sh - hud_h
-        maze_bottom = maze_top - maze_size
-
-        if maze_bottom < MIN_JOY_SIZE:
-            maze_size = max(MIN_JOY_SIZE, sh - hud_h - MIN_JOY_SIZE)
-            maze_size = min(maze_size, sw)
+        is_landscape = (sw > sh)
+        if not is_landscape:
+            f_size, row_h, trophy_h, autosave_h, hud_h = _compute_hud_dims(sw, False)
+            maze_size = min(sw, sh - hud_h)
             maze_top = sh - hud_h
             maze_bottom = maze_top - maze_size
+            if maze_bottom < MIN_JOY_SIZE:
+                maze_size = max(MIN_JOY_SIZE, sh - hud_h - MIN_JOY_SIZE)
+                maze_size = min(maze_size, sw)
+                maze_top = sh - hud_h
+                maze_bottom = maze_top - maze_size
+            maze_left = (sw - maze_size) / 2.0
+        else:
+            f_size, row_h, trophy_h, autosave_h, hud_h = _compute_hud_dims(sh, False)
+            left_w = max(160, int(sh * 0.38))
+            right_w = max(MIN_JOY_SIZE, int(sh * 0.4))
+            maze_size = min(sh, max(MIN_JOY_SIZE, sw - left_w - right_w))
+            maze_bottom = (sh - maze_size) / 2.0
+            maze_top = maze_bottom + maze_size
+            maze_left = left_w + (sw - left_w - right_w - maze_size) / 2.0
 
         self.f_size = f_size
         self.row_h = row_h
+        self.trophy_h = trophy_h
+        self.autosave_h = autosave_h
         self.hud_h = hud_h
         self.maze_size = maze_size
         self.maze_top = maze_top
         self.maze_bottom = maze_bottom
-        self.maze_scale = maze_size / MAZE_WORLD_DIM
-        self.maze_cx = sw / 2.0
+        self.maze_scale = maze_size / self.WORLD_DIM
+        self.maze_cx = maze_left + maze_size / 2.0 if is_landscape else sw / 2.0
         self.maze_center_y = maze_bottom + maze_size / 2.0
 
-        maze_left = (sw - maze_size) / 2.0
         self.stencil_rect1.pos = (maze_left, maze_bottom)
         self.stencil_rect1.size = (maze_size, maze_size)
         self.stencil_rect2.pos = (maze_left, maze_bottom)
         self.stencil_rect2.size = (maze_size, maze_size)
 
     def update_camera(self):
-        self.matrix_group.clear()
-        self.matrix_group.add(Translate(self.maze_cx, self.maze_center_y, 0))
-        self.matrix_group.add(Scale(self.maze_scale, self.maze_scale, 1))
-        self.matrix_group.add(Translate(-MAZE_WORLD_CX, -MAZE_WORLD_CX, 0))
+        # Создаём инструкции один раз, дальше только мутируем — без clear().
+        if self._cam_translate is None:
+            self._cam_translate = Translate(0, 0, 0)
+            self._cam_scale = Scale(1, 1, 1)
+            self._cam_offset = Translate(0, 0, 0)
+            self.matrix_group.add(self._cam_translate)
+            self.matrix_group.add(self._cam_scale)
+            self.matrix_group.add(self._cam_offset)
+        self._cam_translate.x = self.maze_cx
+        self._cam_translate.y = self.maze_center_y
+        self._cam_scale.x = self.maze_scale
+        self._cam_scale.y = self.maze_scale
+        self._cam_offset.x = -self.WORLD_CX
+        self._cam_offset.y = -self.WORLD_CX
 
     def trigger_static_redraw(self, *args):
         self.update_transforms()
@@ -1500,23 +2110,58 @@ class GameWorld20(GameWorldBase):
         self.draw_doors()
         self.update_camera()
         self.draw_entities()
-        self.hud_state = None
+        self.hud_static_state = None
+        self.hud_dynamic_state = None
         self._update_hud_state()
         _schedule_canvas_refresh()
 
     def draw_level(self):
         self.level_group.clear()
         if not hasattr(self, 'maze_top'): return
-        tex = get_text_texture(f"Level-{self.level}", 26)
-        tx = (self.width - tex.size[0]) / 2
-        ty = self.maze_top + self.hud_h - tex.size[1] - 5
-        self.level_group.add(Color(1, 1, 0, 1))
-        self.level_group.add(Rectangle(texture=tex, pos=(tx, ty), size=tex.size))
+        sw, sh = self.width, self.height
+        is_landscape = (sw > sh)
+        f_size = self.f_size
+        if not is_landscape:
+            tex = get_text_texture(f"Level-{self.level}", f_size)
+            top_row_cy = self.maze_top + self.hud_h - self.row_h / 2
+            tx = 15
+            ty = top_row_cy - tex.size[1] / 2
+            self.level_group.add(Color(1, 1, 0, 1))
+            self.level_group.add(Rectangle(texture=tex, pos=(tx, ty), size=tex.size))
 
     def draw_static(self):
+        if getattr(self, '_static_built', False):
+            return
+        self._static_built = True
         self.static_group.clear()
         self.static_group.add(Color(0.05, 0.05, 0.05))
         self.static_group.add(Rectangle(size=(self.grid_w * TOTAL_STEP, self.grid_h * TOTAL_STEP), pos=(0, 0)))
+        if self.pocket_cells:
+            self.static_group.add(Color(*POCKET_FLOOR_COLOR))
+            for (cx_, cy_) in self.pocket_cells:
+                if 0 <= cx_ < self.grid_w and 0 <= cy_ < self.grid_h:
+                    px_ = cx_ * TOTAL_STEP
+                    py_ = cy_ * TOTAL_STEP
+                    self.static_group.add(Rectangle(pos=(px_, py_), size=(CELL_SIZE, CELL_SIZE)))
+
+                if (cx_ + 1, cy_) in self.pocket_cells:
+                    self.static_group.add(Rectangle(pos=(cx_ * TOTAL_STEP + CELL_SIZE, cy_ * TOTAL_STEP), size=(WALL_THICK, CELL_SIZE)))
+                if (cx_, cy_ + 1) in self.pocket_cells:
+                    self.static_group.add(Rectangle(pos=(cx_ * TOTAL_STEP, cy_ * TOTAL_STEP + CELL_SIZE), size=(CELL_SIZE, WALL_THICK)))
+
+                for dx_, dy_ in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nb = (cx_ + dx_, cy_ + dy_)
+                    edge = ((cx_, cy_), nb) if (cx_, cy_) < nb else (nb, (cx_, cy_))
+                    if edge in self.doors:
+                        if dx_ == 1:
+                            self.static_group.add(Rectangle(pos=(cx_ * TOTAL_STEP + CELL_SIZE, cy_ * TOTAL_STEP), size=(WALL_THICK / 2.0, CELL_SIZE)))
+                        elif dx_ == -1:
+                            self.static_group.add(Rectangle(pos=(cx_ * TOTAL_STEP - WALL_THICK / 2.0, cy_ * TOTAL_STEP), size=(WALL_THICK / 2.0, CELL_SIZE)))
+                        elif dy_ == 1:
+                            self.static_group.add(Rectangle(pos=(cx_ * TOTAL_STEP, cy_ * TOTAL_STEP + CELL_SIZE), size=(CELL_SIZE, WALL_THICK / 2.0)))
+                        elif dy_ == -1:
+                            self.static_group.add(Rectangle(pos=(cx_ * TOTAL_STEP, cy_ * TOTAL_STEP - WALL_THICK / 2.0), size=(CELL_SIZE, WALL_THICK / 2.0)))
+
         self.static_group.add(Color(*WALL_COLOR))
         for y in range(self.grid_h):
             for x in range(self.grid_w):
@@ -1524,14 +2169,14 @@ class GameWorld20(GameWorldBase):
                 if m['N']:
                     self.static_group.add(Rectangle(pos=(px - WALL_THICK, py + CELL_SIZE),
                                                     size=(TOTAL_STEP + WALL_THICK, WALL_THICK)))
-                if m['S']:
-                    self.static_group.add(Rectangle(pos=(px - WALL_THICK, py - WALL_THICK),
-                                                    size=(TOTAL_STEP + WALL_THICK, WALL_THICK)))
-                if m['E']:
-                    self.static_group.add(Rectangle(pos=(px + CELL_SIZE, py - WALL_THICK),
-                                                    size=(WALL_THICK, TOTAL_STEP + WALL_THICK)))
                 if m['W']:
                     self.static_group.add(Rectangle(pos=(px - WALL_THICK, py - WALL_THICK),
+                                                    size=(WALL_THICK, TOTAL_STEP + WALL_THICK)))
+                if y == 0 and m['S']:
+                    self.static_group.add(Rectangle(pos=(px - WALL_THICK, py - WALL_THICK),
+                                                    size=(TOTAL_STEP + WALL_THICK, WALL_THICK)))
+                if x == self.grid_w - 1 and m['E']:
+                    self.static_group.add(Rectangle(pos=(px + CELL_SIZE, py - WALL_THICK),
                                                     size=(WALL_THICK, TOTAL_STEP + WALL_THICK)))
 
     def draw_doors(self):
@@ -1547,11 +2192,9 @@ class GameWorld20(GameWorldBase):
             cx = (a[0] + b[0]) * 0.5 * TOTAL_STEP + CELL_SIZE / 2.0
             cy = (a[1] + b[1]) * 0.5 * TOTAL_STEP + CELL_SIZE / 2.0
             if a[0] != b[0]:
-                self.doors_group.add(Rectangle(pos=(cx - DOOR_W / 2, cy - half),
-                                               size=(DOOR_W, half * 2)))
+                self.doors_group.add(Rectangle(pos=(cx - DOOR_W / 2, cy - half), size=(DOOR_W, half * 2)))
             else:
-                self.doors_group.add(Rectangle(pos=(cx - half, cy - DOOR_W / 2),
-                                               size=(half * 2, DOOR_W)))
+                self.doors_group.add(Rectangle(pos=(cx - half, cy - DOOR_W / 2), size=(half * 2, DOOR_W)))
 
     def draw_interactive(self, *args):
         self.interactive_group.clear()
@@ -1575,91 +2218,156 @@ class GameWorld20(GameWorldBase):
             self.interactive_group.add(Color(0, 1, 0.5, 0.8))
             self.interactive_group.add(Line(circle=(cx, cy, r), width=1.5))
 
-        for btn in self.buttons.values():
-            bcx, bcy, astart, aend = btn['bcx'], btn['bcy'], btn['astart'], btn['aend']
-            color = WALL_COLOR if btn['pos'] in self.touched_buttons else GREEN_BUTTON_COLOR
-            self.interactive_group.add(Color(*color))
-            self.interactive_group.add(Ellipse(pos=(bcx - BTN_R, bcy - BTN_R),
-                                               size=(BTN_R * 2, BTN_R * 2),
-                                               angle_start=astart, angle_end=aend))
+        star_size = CELL_SIZE - 4
+        for pos, cid in self.ground_buttons.items():
+            bx, by = pos
+            rgb = self.color_palette[cid] if 0 <= cid < len(self.color_palette) else GREEN_BUTTON_COLOR
+            scx = bx * TOTAL_STEP + CELL_SIZE / 2
+            scy = by * TOTAL_STEP + CELL_SIZE / 2
+            _draw_star(self.interactive_group, scx, scy, star_size, rgb)
 
     def draw_entities(self, *args):
         self._draw_player_eyes()
         progress = 1.0
         if self.enemy_step_interval > 0:
             progress = max(0.0, min(1.0, self.enemy_time / self.enemy_step_interval))
-
         for en in self.enemies:
             ccx, ccy = en['current_cell']
             ncx, ncy = en['next_cell']
             ex = ccx * TOTAL_STEP + (ncx - ccx) * TOTAL_STEP * progress
             ey = ccy * TOTAL_STEP + (ncy - ccy) * TOTAL_STEP * progress
-            en['pixel'] = Vector(ex, ey)
+            # Мутируем существующий вектор — без аллокаций.
+            en['pixel'].x = ex
+            en['pixel'].y = ey
             ecx, ecy = ex + CELL_SIZE / 2, ey + CELL_SIZE / 2
-
             en['g_translate'].x = ecx
             en['g_translate'].y = ecy
+            vdx, vdy = en['dir'].x, en['dir'].y
+            if vdx == 0 and vdy == 0:
+                vdx, vdy = en['last_dir'].x, en['last_dir'].y
+            if (vdx, vdy) != en['last_drawn_dir']:
+                en['last_drawn_dir'] = (vdx, vdy)
+                self._apply_enemy_rotation(en, vdx, vdy)
 
-            dx, dy = en['dir'].x, en['dir'].y
-            if (dx, dy) != en['last_drawn_dir']:
-                en['last_drawn_dir'] = (dx, dy)
-                self._apply_enemy_rotation(en, dx, dy)
+    def draw_hud_static(self):
+        self.hud_static_group.clear()
+        sw, sh = self.width, self.height
+        is_landscape = (sw > sh)
+        if not is_landscape:
+            if not hasattr(self, 'maze_top'): return
+            maze_top = self.maze_top
+            f_size = self.f_size
+            row_h = self.row_h
+            top_row_cy = maze_top + self.hud_h - row_h / 2
 
-    def draw_hud(self, state):
-        self.ui_group.clear()
-        if not hasattr(self, 'maze_top'): return
+            level_tex = get_text_texture(f"Level-{self.level}", f_size)
+            doors_x = 15 + level_tex.size[0] + 20
+            dw = self._draw_text("Doors:", doors_x, top_row_cy, f_size, group=self.hud_static_group)
+            self._draw_text(str(self.num_doors), doors_x + dw + 6, top_row_cy, f_size, group=self.hud_static_group)
 
-        maze_top = self.maze_top
-        f_size = self.f_size
-        row_h = self.row_h
+            icon_r = min(f_size * 0.55, row_h * 0.4)
+            trophy_top_y = maze_top + self.hud_h - row_h
+            self._draw_trophy_board(trophy_top_y, icon_r, group=self.hud_static_group)
+        else:
+            f_size = self.f_size
+            row_h = self.row_h
+            left_w = max(160, int(sh * 0.38))
+            cx = left_w / 2.0
+            cur_y = sh - 25
 
-        y1 = maze_top + row_h * 0.5
-        y2 = maze_top + row_h * 1.5
-        y3 = maze_top + row_h * 2.5
-        y4 = maze_top + row_h * 3.5
+            tex_lvl = get_text_texture(f"Level-{self.level}", f_size)
+            self.hud_static_group.add(Color(1, 1, 0, 1))
+            self.hud_static_group.add(Rectangle(texture=tex_lvl, pos=(cx - tex_lvl.size[0]/2, cur_y - tex_lvl.size[1]/2), size=tex_lvl.size))
+            cur_y -= row_h * 1.2
 
-        r = f_size * 0.55
+            tex_doors = get_text_texture(f"Doors: {self.num_doors}", f_size)
+            self.hud_static_group.add(Color(1, 1, 1, 1))
+            self.hud_static_group.add(Rectangle(texture=tex_doors, pos=(cx - tex_doors.size[0]/2, cur_y - tex_doors.size[1]/2), size=tex_doors.size))
+            cur_y -= row_h * 1.2
 
-        c1x = max(10, self.width * 0.05)
-        r_s = min(r * 0.9, row_h * 0.4)
-        self.ui_group.add(Color(*GREEN_BUTTON_COLOR))
-        self.ui_group.add(Ellipse(pos=(c1x, y1 - r_s), size=(r_s * 2, r_s * 2),
-                                  angle_start=270, angle_end=450))
-        cx_txt = c1x + r_s * 2 + 8
-        w = self._draw_text(f"{state['score']}/{len(self.buttons)}", cx_txt, y1, f_size)
+            icon_r = min(f_size * 0.55, row_h * 0.4)
+            trophy_cell = icon_r * TROPHY_CELL_MULT
+            trophy_gap = icon_r * TROPHY_GAP_MULT
+            board_w = 5 * trophy_cell + 4 * trophy_gap
+            board_scale = min(1.0, (left_w - 20) / board_w)
+            trophy_y = cur_y - trophy_cell * board_scale / 2
+            base_x = cx - (board_w * board_scale) / 2
+            for i in range(5):
+                x = base_x + i * (trophy_cell + trophy_gap) * board_scale
+                scx = x + (trophy_cell * board_scale) / 2
+                scy = trophy_y
+                sz = trophy_cell * board_scale
+                if i < len(self.collected_trophies):
+                    cid = self.collected_trophies[i]
+                    rgb = self.color_palette[cid] if 0 <= cid < len(self.color_palette) else (0.5, 0.5, 0.5)
+                    _draw_star(self.hud_static_group, scx, scy, sz, rgb)
+                else:
+                    _draw_star_outline(self.hud_static_group, scx, scy, sz, (0.25, 0.25, 0.25, 0.7), width=1.0)
 
-        c3x = self.width * 0.72
-        fps_str = f"FPS {state['fps']}"
-        self._draw_text(fps_str, c3x, y1, f_size)
-
-        cc = state.get('color_counts', ())
-        total_enemies = sum(cc)
-        x_pos = 15
-        x_pos = self._draw_labeled_colored(
-            "Enemies:", total_enemies, cc, self.color_palette, x_pos, y2, f_size)
-
-        dc = state.get('door_counts', ())
-        x_pos = 15
-        x_pos = self._draw_labeled_colored(
-            "Doors:", state.get('num_doors', 0), dc, self.color_palette, x_pos, y3, f_size)
-
-        x_pos = 15
-        w = self._draw_text("Ends:", x_pos, y4, f_size); x_pos += w + 6
-        self._draw_text(str(self.target_de), x_pos, y4, f_size)
+    def draw_hud_dynamic(self):
+        self.hud_dynamic_group.clear()
+        sw, sh = self.width, self.height
+        is_landscape = (sw > sh)
+        if not is_landscape:
+            if not hasattr(self, 'maze_top'): return
+            maze_top = self.maze_top
+            row_h = self.row_h
+            autosave_h = getattr(self, 'autosave_h', int(row_h * 0.9))
+            row3_cy = maze_top + autosave_h / 2
+            self._draw_autosave_counter(row3_cy, x_center=sw * 0.18, group=self.hud_dynamic_group)
+        else:
+            f_size = self.f_size
+            row_h = self.row_h
+            left_w = max(160, int(sh * 0.38))
+            cx = left_w / 2.0
+            icon_r = min(f_size * 0.55, row_h * 0.4)
+            trophy_cell = icon_r * TROPHY_CELL_MULT
+            trophy_gap = icon_r * TROPHY_GAP_MULT
+            board_w = 5 * trophy_cell + 4 * trophy_gap
+            board_scale = min(1.0, (left_w - 20) / board_w)
+            counter_y = sh - 25 - row_h * 1.2 * 3 - trophy_cell * board_scale - row_h * 0.8
+            self._draw_autosave_counter(counter_y, x_center=cx, group=self.hud_dynamic_group)
 
     def _update_hud_state(self):
-        cur = {'tick': self.enemy_tick_counter, 'num_doors': self.num_doors,
-               'color_counts': self._color_counts_tuple,
-               'door_counts': self._door_counts_tuple,
-               'score': len(self.touched_buttons)}
-        if getattr(self, 'hud_state', None) != cur:
-            self.hud_state = cur
-            st = dict(cur); st['fps'] = int(Clock.get_fps())
-            self.draw_hud(st)
+        static_cur = (self.level, self.num_doors, tuple(self.collected_trophies))
+        if getattr(self, 'hud_static_state', None) != static_cur:
+            self.hud_static_state = static_cur
+            self.draw_hud_static()
+
+        self._update_hud_fps()
+
+        dyn_cur = (self.full_sleep_cycles, self._get_slept_pct())
+        if getattr(self, 'hud_dynamic_state', None) != dyn_cur:
+            self.hud_dynamic_state = dyn_cur
+            self.draw_hud_dynamic()
+
+
+class GameWorld10(GameWorldStatic):
+    SAVE_VERSION = 3
+    GRID_W = MAZE_W_10
+    GRID_H = MAZE_H_10
+    WORLD_DIM = MAZE_WORLD_DIM_10
+    WORLD_CX = MAZE_WORLD_CX_10
+    MAX_ENEMIES = NUM_ENEMIES_10
+    PATTERN_POOL = PATTERNS_10_BY_COLOR
+    _autosave_every_n = 5
+    _autosave_digit = 5
+
+
+class GameWorld20(GameWorldStatic):
+    SAVE_VERSION = 16
+    GRID_W = MAZE_W
+    GRID_H = MAZE_H
+    WORLD_DIM = MAZE_WORLD_DIM
+    WORLD_CX = MAZE_WORLD_CX
+    MAX_ENEMIES = NUM_ENEMIES
+    PATTERN_POOL = PATTERNS_20_BY_COLOR
+    _autosave_every_n = 2
+    _autosave_digit = 2
 
 
 class GameWorldLarge(GameWorldBase):
-    SAVE_VERSION = 8
+    SAVE_VERSION = 14
     IS_LARGE = True
 
     def __init__(self, **kwargs):
@@ -1671,7 +2379,6 @@ class GameWorldLarge(GameWorldBase):
         self.time_accumulator = 0.0
         self.logic_steps = 0
         self.dt_step = 1.0 / 60.0
-        self.autosave_every = 10 if CURRENT_MODE == MODE_100 else 5
         self._init_sounds()
         self.union_visible_cells = set()
 
@@ -1679,89 +2386,58 @@ class GameWorldLarge(GameWorldBase):
         data = app.pre_gen_data
         self.maze_data = data['grid']
         self.grid_w, self.grid_h = len(self.maze_data[0]), len(self.maze_data)
-        self.target_de = data['target_de']
         self.level = data.get('level', 1)
         self.last_drawn_chunk = None
 
         self.adj_list = {(x, y): [(x + dx, y + dy) for d, (dx, dy) in DIRS.items()
                                   if self.maze_data[y][x][d] == 0]
                          for y in range(self.grid_h) for x in range(self.grid_w)}
-        self.corridor_importance = self._compute_corridor_importance()
-        imp_vals = list(self.corridor_importance.values())
-        if imp_vals:
-            logs = sorted(math.log(v + 1.0) for v in imp_vals)
-            self.imp_threshold = logs[min(len(logs) - 1, int(len(logs) * 0.8))]
-        else:
-            self.imp_threshold = 0.0
-
         self.dead_ends_set = set(data.get('dead_ends', []))
-        self.dead_end_positions = data.get('dead_end_positions', {})
-        self.underlined_cells = {v for v, imp in self.corridor_importance.items()
-                                 if v not in self.dead_ends_set
-                                 and math.log(imp + 1.0) >= self.imp_threshold}
-        self.doors = set()
-        for cell in self.underlined_cells:
-            for nb in self.adj_list[cell]:
-                if nb in self.underlined_cells: continue
-                self.doors.add((cell, nb) if cell < nb else (nb, cell))
+        self.target_de = len(self.dead_ends_set)
 
-        e_spawns = data['e_spawns']
-        self.door_for_enemy = {}
-        for idx in sorted(e_spawns.keys()):
-            dk = self._find_nearest_door(tuple(e_spawns[idx])) or ('orphan', idx)
-            self.door_for_enemy[idx] = dk
-        n_unique = len(set(self.door_for_enemy.values()))
-        self.num_colors = min(len(FIXED_DOOR_COLORS), n_unique) if n_unique > 0 else 0
-        self.num_doors = len(self.doors)
-        self.color_palette = list(FIXED_DOOR_COLORS[:self.num_colors])
-        self.door_color_id = self._assign_door_colors_spatially(self.doors, self.num_colors)
-        self.door_counts = [0] * self.num_colors
-        for dk in self.doors:
-            cid = self.door_color_id.get(dk)
-            if cid is not None and 0 <= cid < self.num_colors:
-                self.door_counts[cid] += 1
-        self._door_counts_tuple = tuple(self.door_counts)
+        self._prepare_door_data()
+        self._prepare_cell_avails()
 
         self.p_speed = 1
-        self.buttons = data['buttons']
         p_spawn = data['p_spawn']
         self.hatch_pos = tuple(p_spawn)
-        self.cell_avails = {(x, y): [Vector(v) for d, v in DIRS.items() if self.maze_data[y][x][d] == 0]
-                            for y in range(self.grid_h) for x in range(self.grid_w)}
-        self.cell_avails_by_color = {}
-        for cid in range(self.num_colors):
-            dd = {}
-            for cell, dirs in self.cell_avails.items():
-                filtered = []
-                for v in dirs:
-                    nxt = (cell[0] + int(v.x), cell[1] + int(v.y))
-                    edge = (cell, nxt) if cell < nxt else (nxt, cell)
-                    dc = self.door_color_id.get(edge)
-                    if dc is None or dc == cid:
-                        filtered.append(v)
-                dd[cell] = filtered
-            self.cell_avails_by_color[cid] = dd
 
         self._build_canvas()
         self.level_group = InstructionGroup()
         self.canvas.add(self.level_group)
         self._init_checkpoint_label()
 
-        if CURRENT_MODE == MODE_50:
-            self._pattern_pool = SYMMETRIC_PATTERN_INDICES[:50]
-            self._max_enemies = 50
-        else:
-            self._pattern_pool = list(range(len(DOT_PATTERNS)))
+        self.hud_extra_group = InstructionGroup(); self.canvas.add(self.hud_extra_group)
+
+        if CURRENT_MODE == MODE_100:
+            self._pattern_pool = PATTERNS_100_BY_COLOR
             self._max_enemies = 100
+            self._dim_mult = 11
+            self._static_delta = 6
+            self._door_dist = 7
+            self._vis_radius = 7
+        else:
+            self._pattern_pool = PATTERNS_50_BY_COLOR
+            self._max_enemies = 50
+            self._dim_mult = 9
+            self._static_delta = 5
+            self._door_dist = 6
+            self._vis_radius = 6
 
         self.enemies = []
         save_data = self._load_save_data()
         self.hatch_open = False
-        self.touched_buttons = set()
+        self.collected_trophies = []
+        self.collected_count = 0
+        self.ground_buttons = {}
+        self.full_sleep_cycles = 0
 
         if save_data:
-            self.touched_buttons = save_data.get('touched_buttons', set())
-            self.hatch_open = save_data['hatch_open']
+            self.hatch_open = save_data.get('hatch_open', False)
+            self.collected_trophies = list(save_data.get('collected_trophies', []))
+            self.collected_count = len(self.collected_trophies)
+            self.ground_buttons = dict(save_data.get('ground_buttons', {}))
+            self.full_sleep_cycles = int(save_data.get('full_sleep_cycles', 0))
             self.player_grid = Vector(save_data['player_grid_x'], save_data['player_grid_y'])
             self.p_pixel = Vector(save_data['p_pixel_x'], save_data['p_pixel_y'])
             self.p_dir = Vector(save_data['p_dir_x'], save_data['p_dir_y'])
@@ -1776,15 +2452,29 @@ class GameWorldLarge(GameWorldBase):
             self.p_dir = VEC_ZERO
             self.last_p_dir = Vector(0, 1)
 
-            for slot_idx, (_, e_spawn) in enumerate(sorted(e_spawns.items())):
-                if slot_idx >= self._max_enemies:
-                    break
-                pat_idx = self._pattern_pool[slot_idx % len(self._pattern_pool)]
-                rule = 'right' if slot_idx % 2 == 0 else 'left'
-                prof = {'pattern_idx': pat_idx, 'turn_rule': rule,
-                        'speed': 0.5, 'color': WALL_COLOR}
-                self.enemies.append(self._make_enemy_dict(
-                    slot_idx, prof, saved=False, e_spawn=e_spawn))
+            num_per_color = max(1, self._max_enemies // self.num_colors)
+            picks = self._pick_balanced_spawns(num_per_color, max_colors=self.num_colors)
+            by_color = {}
+            for (pos, cid, dist) in picks:
+                by_color.setdefault(cid, []).append((pos, dist))
+            for cid in by_color:
+                by_color[cid].sort(key=lambda x: -x[1])
+
+            slot_idx = 0
+            for cid in sorted(by_color.keys()):
+                color_pool = self._pattern_pool[cid] if cid < len(self._pattern_pool) else self._pattern_pool[0]
+                for i, (pos, dist) in enumerate(by_color[cid]):
+                    if slot_idx >= self._max_enemies:
+                        break
+                    rule = 'right' if i % 2 == 0 else 'left'
+                    is_carrier = (i == 0)
+                    pat_idx = color_pool[i % len(color_pool)] if color_pool else 0
+                    prof = {'pattern_idx': pat_idx, 'turn_rule': rule,
+                            'speed': 0.5, 'color': WALL_COLOR}
+                    self.enemies.append(self._make_enemy_dict(
+                        slot_idx, prof, saved=False, e_spawn=pos,
+                        color_id=cid, is_carrier=is_carrier))
+                    slot_idx += 1
 
             self.sleep_cycle_set = set(e['idx'] for e in self.enemies)
 
@@ -1800,16 +2490,20 @@ class GameWorldLarge(GameWorldBase):
         self.enemy_time = save_data.get('enemy_time', 0.0) if save_data else self.enemy_step_interval
         self.enemy_tick_counter = 0
         self.next_dir = None
-        self.player_last_cell = (int(self.player_grid.x), int(self.player_grid.y))
+        self.player_last_cell = _compute_from_cell(self.player_grid, self.p_dir,
+                                                  self.grid_w, self.grid_h)
         self._refresh_player_dists()
+        self._update_compass()
 
-        if not self.hatch_open and len(self.touched_buttons) >= len(self.buttons) \
-                and len(self.buttons) > 0:
+        if not self.hatch_open and self.collected_count >= BUTTONS_TO_OPEN:
             self.hatch_open = True
 
         self.current_joy_dir = None
         self.last_p_cells = self.get_occupied_cells(self.p_pixel)
         self.interactive_redraw_needed = False
+
+        if save_data:
+            self._restore_union_visible_cells()
 
         self.bind(size=self.trigger_static_redraw, pos=self.trigger_static_redraw)
         self._update_event = Clock.schedule_interval(self.update, 1 / 60.0)
@@ -1818,45 +2512,60 @@ class GameWorldLarge(GameWorldBase):
         sw, sh = self.width, self.height
         if sw <= 0 or sh <= 0:
             return
-
-        f_size = max(14, int(sw / 40))
-        row_h = int(f_size * 1.8)
-        hud_h = row_h * 4
-
-        maze_size = sw
-        maze_top = sh - hud_h
-        maze_bottom = maze_top - maze_size
-
-        if maze_bottom < MIN_JOY_SIZE:
-            maze_size = max(MIN_JOY_SIZE, sh - hud_h - MIN_JOY_SIZE)
-            maze_size = min(maze_size, sw)
+        is_landscape = (sw > sh)
+        if not is_landscape:
+            f_size, row_h, trophy_h, autosave_h, hud_h = _compute_hud_dims(sw, False)
+            maze_size = min(sw, sh - hud_h)
             maze_top = sh - hud_h
             maze_bottom = maze_top - maze_size
+            if maze_bottom < MIN_JOY_SIZE:
+                maze_size = max(MIN_JOY_SIZE, sh - hud_h - MIN_JOY_SIZE)
+                maze_size = min(maze_size, sw)
+                maze_top = sh - hud_h
+                maze_bottom = maze_top - maze_size
+            maze_left = (sw - maze_size) / 2.0
+        else:
+            f_size, row_h, trophy_h, autosave_h, hud_h = _compute_hud_dims(sh, False)
+            left_w = max(160, int(sh * 0.38))
+            right_w = max(MIN_JOY_SIZE, int(sh * 0.4))
+            maze_size = min(sh, max(MIN_JOY_SIZE, sw - left_w - right_w))
+            maze_bottom = (sh - maze_size) / 2.0
+            maze_top = maze_bottom + maze_size
+            maze_left = left_w + (sw - left_w - right_w - maze_size) / 2.0
 
         self.f_size = f_size
         self.row_h = row_h
+        self.trophy_h = trophy_h
+        self.autosave_h = autosave_h
         self.hud_h = hud_h
         self.maze_size = maze_size
         self.maze_top = maze_top
         self.maze_bottom = maze_bottom
 
-        dim = 9 * TOTAL_STEP
+        dim = self._dim_mult * TOTAL_STEP
         self.maze_scale = maze_size / dim
-        self.maze_cx = sw / 2.0
+        self.maze_cx = maze_left + maze_size / 2.0 if is_landscape else sw / 2.0
         self.maze_center_y = maze_bottom + maze_size / 2.0
 
-        maze_left = (sw - maze_size) / 2.0
         self.stencil_rect1.pos = (maze_left, maze_bottom)
         self.stencil_rect1.size = (maze_size, maze_size)
         self.stencil_rect2.pos = (maze_left, maze_bottom)
         self.stencil_rect2.size = (maze_size, maze_size)
 
     def update_camera(self):
-        self.matrix_group.clear()
-        self.matrix_group.add(Translate(self.maze_cx, self.maze_center_y, 0))
-        self.matrix_group.add(Scale(self.maze_scale, self.maze_scale, 1))
-        self.matrix_group.add(Translate(-self.p_pixel.x - CELL_SIZE / 2,
-                                        -self.p_pixel.y - CELL_SIZE / 2, 0))
+        if self._cam_translate is None:
+            self._cam_translate = Translate(0, 0, 0)
+            self._cam_scale = Scale(1, 1, 1)
+            self._cam_offset = Translate(0, 0, 0)
+            self.matrix_group.add(self._cam_translate)
+            self.matrix_group.add(self._cam_scale)
+            self.matrix_group.add(self._cam_offset)
+        self._cam_translate.x = self.maze_cx
+        self._cam_translate.y = self.maze_center_y
+        self._cam_scale.x = self.maze_scale
+        self._cam_scale.y = self.maze_scale
+        self._cam_offset.x = -self.p_pixel.x - CELL_SIZE / 2
+        self._cam_offset.y = -self.p_pixel.y - CELL_SIZE / 2
 
     def trigger_static_redraw(self, *args):
         self.update_transforms()
@@ -1867,25 +2576,64 @@ class GameWorldLarge(GameWorldBase):
         self.draw_doors(*self.last_drawn_chunk)
         self.update_camera()
         self.draw_entities(*self.last_drawn_chunk)
-        self.hud_state = None
+        self.hud_static_state = None
+        self.hud_dynamic_state = None
+        self.hud_extra_state = None
         self._update_hud_state()
         _schedule_canvas_refresh()
 
     def draw_level(self):
         self.level_group.clear()
         if not hasattr(self, 'maze_top'): return
-        tex = get_text_texture(f"Level-{self.level}", 26)
-        tx = (self.width - tex.size[0]) / 2
-        ty = self.maze_top + self.hud_h - tex.size[1] - 5
-        self.level_group.add(Color(1, 1, 0, 1))
-        self.level_group.add(Rectangle(texture=tex, pos=(tx, ty), size=tex.size))
+        sw, sh = self.width, self.height
+        is_landscape = (sw > sh)
+        if not is_landscape:
+            tex = get_text_texture(f"Level-{self.level}", self.f_size)
+            top_row_cy = self.maze_top + self.hud_h - self.row_h / 2
+            tx = 15
+            ty = top_row_cy - tex.size[1] / 2
+            self.level_group.add(Color(1, 1, 0, 1))
+            self.level_group.add(Rectangle(texture=tex, pos=(tx, ty), size=tex.size))
 
     def draw_static(self, px, py):
+        if getattr(self, '_drawn_static_chunk', None) == (px, py):
+            return
+        self._drawn_static_chunk = (px, py)
         self.static_group.clear()
         self.static_group.add(Color(0.05, 0.05, 0.05))
         self.static_group.add(Rectangle(size=(self.grid_w * TOTAL_STEP, self.grid_h * TOTAL_STEP), pos=(0, 0)))
-        min_y, max_y = max(0, py - 5), min(self.grid_h, py + 6)
-        min_x, max_x = max(0, px - 5), min(self.grid_w, px + 6)
+        d = self._static_delta
+        min_y, max_y = max(0, py - d - 1), min(self.grid_h, py + d + 2)
+        min_x, max_x = max(0, px - d - 1), min(self.grid_w, px + d + 2)
+
+        if self.pocket_cells:
+            d_pocket = d + 1
+            self.static_group.add(Color(*POCKET_FLOOR_COLOR))
+            for (cx_, cy_) in self.pocket_cells:
+                if abs(cx_ - px) > d_pocket or abs(cy_ - py) > d_pocket:
+                    continue
+                if 0 <= cx_ < self.grid_w and 0 <= cy_ < self.grid_h:
+                    px_ = cx_ * TOTAL_STEP
+                    py_ = cy_ * TOTAL_STEP
+                    self.static_group.add(Rectangle(pos=(px_, py_), size=(CELL_SIZE, CELL_SIZE)))
+
+                if (cx_ + 1, cy_) in self.pocket_cells:
+                    self.static_group.add(Rectangle(pos=(cx_ * TOTAL_STEP + CELL_SIZE, cy_ * TOTAL_STEP), size=(WALL_THICK, CELL_SIZE)))
+                if (cx_, cy_ + 1) in self.pocket_cells:
+                    self.static_group.add(Rectangle(pos=(cx_ * TOTAL_STEP, cy_ * TOTAL_STEP + CELL_SIZE), size=(CELL_SIZE, WALL_THICK)))
+
+                for dx_, dy_ in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nb = (cx_ + dx_, cy_ + dy_)
+                    edge = ((cx_, cy_), nb) if (cx_, cy_) < nb else (nb, (cx_, cy_))
+                    if edge in self.doors:
+                        if dx_ == 1:
+                            self.static_group.add(Rectangle(pos=(cx_ * TOTAL_STEP + CELL_SIZE, cy_ * TOTAL_STEP), size=(WALL_THICK / 2.0, CELL_SIZE)))
+                        elif dx_ == -1:
+                            self.static_group.add(Rectangle(pos=(cx_ * TOTAL_STEP - WALL_THICK / 2.0, cy_ * TOTAL_STEP), size=(WALL_THICK / 2.0, CELL_SIZE)))
+                        elif dy_ == 1:
+                            self.static_group.add(Rectangle(pos=(cx_ * TOTAL_STEP, cy_ * TOTAL_STEP + CELL_SIZE), size=(CELL_SIZE, WALL_THICK / 2.0)))
+                        elif dy_ == -1:
+                            self.static_group.add(Rectangle(pos=(cx_ * TOTAL_STEP, cy_ * TOTAL_STEP - WALL_THICK / 2.0), size=(CELL_SIZE, WALL_THICK / 2.0)))
 
         self.static_group.add(Color(*WALL_COLOR))
         for y in range(min_y, max_y):
@@ -1894,12 +2642,6 @@ class GameWorldLarge(GameWorldBase):
                 if m['N'] and y != self.grid_h - 1:
                     self.static_group.add(Rectangle(pos=(cx - WALL_THICK, cy + CELL_SIZE),
                                                     size=(TOTAL_STEP + WALL_THICK, WALL_THICK)))
-                if m['S'] and y != 0:
-                    self.static_group.add(Rectangle(pos=(cx - WALL_THICK, cy - WALL_THICK),
-                                                    size=(TOTAL_STEP + WALL_THICK, WALL_THICK)))
-                if m['E'] and x != self.grid_w - 1:
-                    self.static_group.add(Rectangle(pos=(cx + CELL_SIZE, cy - WALL_THICK),
-                                                    size=(WALL_THICK, TOTAL_STEP + WALL_THICK)))
                 if m['W'] and x != 0:
                     self.static_group.add(Rectangle(pos=(cx - WALL_THICK, cy - WALL_THICK),
                                                     size=(WALL_THICK, TOTAL_STEP + WALL_THICK)))
@@ -1926,9 +2668,11 @@ class GameWorldLarge(GameWorldBase):
         DOOR_W = WALL_THICK / 3.0
         half = CELL_SIZE / 2.0
         if not self.color_palette: return
+        d = self._static_delta
         for (a, b) in self.doors:
             mx, my = (a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5
-            if abs(mx - px) > 6 or abs(my - py) > 6: continue
+            if abs(mx - px) > d or abs(my - py) > d:
+                continue
             cid = self.door_color_id.get((a, b))
             if cid is None: continue
             r, g, bl = self.color_palette[cid]
@@ -1936,16 +2680,15 @@ class GameWorldLarge(GameWorldBase):
             cx = mx * TOTAL_STEP + CELL_SIZE / 2.0
             cy = my * TOTAL_STEP + CELL_SIZE / 2.0
             if a[0] != b[0]:
-                self.doors_group.add(Rectangle(pos=(cx - DOOR_W / 2, cy - half),
-                                               size=(DOOR_W, half * 2)))
+                self.doors_group.add(Rectangle(pos=(cx - DOOR_W / 2, cy - half), size=(DOOR_W, half * 2)))
             else:
-                self.doors_group.add(Rectangle(pos=(cx - half, cy - DOOR_W / 2),
-                                               size=(half * 2, DOOR_W)))
+                self.doors_group.add(Rectangle(pos=(cx - half, cy - DOOR_W / 2), size=(half * 2, DOOR_W)))
 
     def draw_interactive(self, px, py):
         self.interactive_group.clear()
+        d = self._static_delta
         hx, hy = self.hatch_pos
-        if abs(hx - px) <= 5 and abs(hy - py) <= 5:
+        if abs(hx - px) <= d and abs(hy - py) <= d:
             hx_px, hy_px = hx * TOTAL_STEP, hy * TOTAL_STEP
             hs = CELL_SIZE * 0.9
             off = (CELL_SIZE - hs) / 2
@@ -1964,67 +2707,72 @@ class GameWorldLarge(GameWorldBase):
                 self.interactive_group.add(Ellipse(pos=(hx_px + off, hy_px + off), size=(hs, hs)))
                 self.interactive_group.add(Color(0, 1, 0.5, 0.8))
                 self.interactive_group.add(Line(circle=(cx, cy, r), width=1.5))
-
-        for btn in self.buttons.values():
-            if abs(btn['pos'][0] - px) <= 5 and abs(btn['pos'][1] - py) <= 5:
-                bcx, bcy, astart, aend = btn['bcx'], btn['bcy'], btn['astart'], btn['aend']
-                color = WALL_COLOR if btn['pos'] in self.touched_buttons else GREEN_BUTTON_COLOR
-                self.interactive_group.add(Color(*color))
-                self.interactive_group.add(Ellipse(pos=(bcx - BTN_R, bcy - BTN_R),
-                                                   size=(BTN_R * 2, BTN_R * 2),
-                                                   angle_start=astart, angle_end=aend))
+        star_size = CELL_SIZE - 4
+        for pos, cid in self.ground_buttons.items():
+            bx, by = pos
+            if abs(bx - px) > d or abs(by - py) > d:
+                continue
+            rgb = self.color_palette[cid] if 0 <= cid < len(self.color_palette) else GREEN_BUTTON_COLOR
+            scx = bx * TOTAL_STEP + CELL_SIZE / 2
+            scy = by * TOTAL_STEP + CELL_SIZE / 2
+            _draw_star(self.interactive_group, scx, scy, star_size, rgb)
 
     def draw_entities(self, gx, gy):
         self._draw_player_eyes()
         progress = 1.0
         if self.enemy_step_interval > 0:
             progress = max(0.0, min(1.0, self.enemy_time / self.enemy_step_interval))
-
+        vr = self._vis_radius
         for en in self.enemies:
             ccx, ccy = en['current_cell']
             ncx, ncy = en['next_cell']
             vcx = ccx + (ncx - ccx) * progress
             vcy = ccy + (ncy - ccy) * progress
-            if abs(vcx - gx) > ENEMY_VIS_RADIUS or abs(vcy - gy) > ENEMY_VIS_RADIUS:
+            if abs(vcx - gx) > vr or abs(vcy - gy) > vr:
+                # Скрываем: сдвигаем группу далеко за пределы мира.
                 if en.get('is_visible', True):
-                    self.dynamic_group.remove(en['g_group'])
+                    en['g_translate'].x = -100000
+                    en['g_translate'].y = -100000
                     en['is_visible'] = False
                 continue
             if not en.get('is_visible', True):
-                self.dynamic_group.add(en['g_group'])
                 en['is_visible'] = True
-
             ex = ccx * TOTAL_STEP + (ncx - ccx) * TOTAL_STEP * progress
             ey = ccy * TOTAL_STEP + (ncy - ccy) * TOTAL_STEP * progress
-            en['pixel'] = Vector(ex, ey)
+            en['pixel'].x = ex
+            en['pixel'].y = ey
             ecx, ecy = ex + CELL_SIZE / 2, ey + CELL_SIZE / 2
-
             en['g_translate'].x = ecx
             en['g_translate'].y = ecy
+            vdx, vdy = en['dir'].x, en['dir'].y
+            if vdx == 0 and vdy == 0:
+                vdx, vdy = en['last_dir'].x, en['last_dir'].y
+            if (vdx, vdy) != en['last_drawn_dir']:
+                en['last_drawn_dir'] = (vdx, vdy)
+                self._apply_enemy_rotation(en, vdx, vdy)
 
-            dx, dy = en['dir'].x, en['dir'].y
-            if (dx, dy) != en['last_drawn_dir']:
-                en['last_drawn_dir'] = (dx, dy)
-                self._apply_enemy_rotation(en, dx, dy)
-
-    def _draw_hud_enemy(self, en, cx, cy, scale=1.0):
+    def _draw_hud_enemy(self, en, cx, cy, scale=1.0, group=None):
+        if group is None:
+            group = self.hud_extra_group
         r = (CELL_SIZE * scale) / 2
-        c = en['color']
-        self.ui_group.add(Color(*c))
-        self.ui_group.add(Ellipse(pos=(cx - r, cy - r), size=(CELL_SIZE * scale, CELL_SIZE * scale)))
-        dx, dy = en.get('dir', Vector(0, -1)).x, en.get('dir', Vector(0, -1)).y
+        group.add(Color(*en['color']))
+        group.add(Ellipse(pos=(cx - r, cy - r), size=(CELL_SIZE * scale, CELL_SIZE * scale)))
+        dx, dy = en['dir'].x, en['dir'].y
+        if dx == 0 and dy == 0:
+            ld = en.get('last_dir', VEC_ZERO)
+            dx, dy = ld.x, ld.y
         if   dx == 0 and dy == 1:   fa = 0
         elif dx == 1 and dy == 0:   fa = 90
         elif dx == 0 and dy == -1:  fa = 180
         elif dx == -1 and dy == 0:  fa = 270
         else:                       fa = 180
         if en['turn_rule'] == 'right':
-            a_s, a_e = fa + 5, fa + 50
+            a_s, a_e = fa - 17.5, fa + 50.0
         else:
-            a_s, a_e = fa - 50, fa - 5
+            a_s, a_e = fa - 50.0, fa + 17.5
         mc = en.get('mark_color', (0, 0, 0))
-        self.ui_group.add(Color(*mc))
-        self.ui_group.add(Line(circle=(cx, cy, 18 * scale, a_s, a_e), width=2 * scale))
+        group.add(Color(*mc))
+        group.add(Line(circle=(cx, cy, 18 * scale, a_s, a_e), width=2 * scale))
         pts = DOT_PATTERNS[en['pattern_idx']] if 0 <= en['pattern_idx'] < len(DOT_PATTERNS) else []
         rad, dsz = 3 * scale, 6 * scale
         for i, (px, py) in enumerate(pts):
@@ -2034,81 +2782,205 @@ class GameWorldLarge(GameWorldBase):
             elif dx == -1 and dy == 0: rx, ry = -py, px
             else:                      rx, ry = px, py
             rx *= scale; ry *= scale
-            self.ui_group.add(Color(0, 0, 0))
-            self.ui_group.add(Ellipse(pos=(cx + rx - rad, cy + ry - rad), size=(dsz, dsz)))
+            group.add(Color(0, 0, 0))
+            group.add(Ellipse(pos=(cx + rx - rad, cy + ry - rad), size=(dsz, dsz)))
 
-    def draw_hud(self, state, target_en):
-        self.ui_group.clear()
-        if not hasattr(self, 'maze_top'): return
+    def draw_hud_static(self):
+        self.hud_static_group.clear()
+        sw, sh = self.width, self.height
+        is_landscape = (sw > sh)
+        if not is_landscape:
+            if not hasattr(self, 'maze_top'): return
+            maze_top = self.maze_top
+            f_size = self.f_size
+            row_h = self.row_h
+            top_row_cy = maze_top + self.hud_h - row_h / 2
 
-        maze_top = self.maze_top
-        maze_size = self.maze_size
-        f_size = self.f_size
-        row_h = self.row_h
+            level_tex = get_text_texture(f"Level-{self.level}", f_size)
+            doors_x = 15 + level_tex.size[0] + 20
+            dw = self._draw_text("Doors:", doors_x, top_row_cy, f_size, group=self.hud_static_group)
+            self._draw_text(str(self.num_doors), doors_x + dw + 6, top_row_cy, f_size, group=self.hud_static_group)
 
-        lw = 1.0
-        self.ui_group.add(Color(1, 0.4, 0.7, 1))
-        self.ui_group.add(Line(rectangle=(lw, self.maze_bottom + lw,
-                                          maze_size - lw * 2, maze_size - lw * 2), width=lw))
+            icon_r = min(f_size * 0.55, row_h * 0.4)
+            trophy_top_y = maze_top + self.hud_h - row_h
+            self._draw_trophy_board(trophy_top_y, icon_r, group=self.hud_static_group)
+        else:
+            f_size = self.f_size
+            row_h = self.row_h
+            left_w = max(160, int(sh * 0.38))
+            cx = left_w / 2.0
+            cur_y = sh - 25
 
-        r = f_size * 0.55
+            tex_lvl = get_text_texture(f"Level-{self.level}", f_size)
+            self.hud_static_group.add(Color(1, 1, 0, 1))
+            self.hud_static_group.add(Rectangle(texture=tex_lvl, pos=(cx - tex_lvl.size[0]/2, cur_y - tex_lvl.size[1]/2), size=tex_lvl.size))
+            cur_y -= row_h * 1.1
 
-        y1 = maze_top + row_h * 0.5
-        y2 = maze_top + row_h * 1.5
-        y3 = maze_top + row_h * 2.5
-        y4 = maze_top + row_h * 3.5
+            tex_doors = get_text_texture(f"Doors: {self.num_doors}", f_size)
+            self.hud_static_group.add(Color(1, 1, 1, 1))
+            self.hud_static_group.add(Rectangle(texture=tex_doors, pos=(cx - tex_doors.size[0]/2, cur_y - tex_doors.size[1]/2), size=tex_doors.size))
+            cur_y -= row_h * 1.1
 
-        c1x = max(10, self.width * 0.05)
-        r_s = min(r * 0.9, row_h * 0.4)
-        self.ui_group.add(Color(*GREEN_BUTTON_COLOR))
-        self.ui_group.add(Ellipse(pos=(c1x, y1 - r_s), size=(r_s * 2, r_s * 2),
-                                  angle_start=270, angle_end=450))
-        cx_txt = c1x + r_s * 2 + 8
-        w = self._draw_text(f"{state['score']}/{len(self.buttons)}", cx_txt, y1, f_size)
-        cx_txt += w + 8
-        w = self._draw_text("|", cx_txt, y1, f_size)
-        cx_txt += w + 8
-        if state.get('btn_dist') is not None:
-            self._draw_text(str(state['btn_dist']), cx_txt, y1, f_size)
+            icon_r = min(f_size * 0.55, row_h * 0.4)
+            trophy_cell = icon_r * TROPHY_CELL_MULT
+            trophy_gap = icon_r * TROPHY_GAP_MULT
+            board_w = 5 * trophy_cell + 4 * trophy_gap
+            board_scale = min(1.0, (left_w - 20) / board_w)
+            trophy_y = cur_y - trophy_cell * board_scale / 2
+            base_x = cx - (board_w * board_scale) / 2
+            for i in range(5):
+                x = base_x + i * (trophy_cell + trophy_gap) * board_scale
+                scx = x + (trophy_cell * board_scale) / 2
+                scy = trophy_y
+                sz = trophy_cell * board_scale
+                if i < len(self.collected_trophies):
+                    cid = self.collected_trophies[i]
+                    rgb = self.color_palette[cid] if 0 <= cid < len(self.color_palette) else (0.5, 0.5, 0.5)
+                    _draw_star(self.hud_static_group, scx, scy, sz, rgb)
+                else:
+                    _draw_star_outline(self.hud_static_group, scx, scy, sz, (0.25, 0.25, 0.25, 0.7), width=1.0)
 
-        c2x = self.width * 0.42
-        icon_r = min(r, row_h * 0.4)
-        self.ui_group.add(Color(0, 1, 0.5))
-        self.ui_group.add(Ellipse(pos=(c2x, y1 - icon_r), size=(icon_r * 2, icon_r * 2)))
-        self.ui_group.add(Color(0, 0, 0))
-        self.ui_group.add(Ellipse(pos=(c2x + icon_r * 0.2, y1 + icon_r * 0.1),
-                                  size=(icon_r * 0.15, icon_r * 0.15)))
-        self.ui_group.add(Ellipse(pos=(c2x + icon_r * 0.65, y1 + icon_r * 0.1),
-                                  size=(icon_r * 0.15, icon_r * 0.15)))
-        cx_t = c2x + icon_r * 2 + 6
-        max_icon_r = row_h * 0.38
-        sc = min(self.maze_scale * 0.5, max_icon_r * 2.0 / CELL_SIZE)
-        if target_en:
-            self._draw_hud_enemy(target_en, cx_t + icon_r, y1, scale=sc)
-        cx_t += icon_r * 2 + 6
-        val_str = f"{state['dist_val']}" if state['dist_val'] < 9999 else "-"
-        self._draw_text(val_str, cx_t, y1, f_size)
+    def draw_hud_dynamic(self):
+        self.hud_dynamic_group.clear()
+        sw, sh = self.width, self.height
+        is_landscape = (sw > sh)
+        if not is_landscape:
+            if not hasattr(self, 'maze_top'): return
+            maze_top = self.maze_top
+            row_h = self.row_h
+            autosave_h = getattr(self, 'autosave_h', int(row_h * 0.9))
+            row3_cy = maze_top + autosave_h / 2
+            self._draw_autosave_counter(row3_cy, x_center=sw * 0.18, group=self.hud_dynamic_group)
+        else:
+            f_size = self.f_size
+            row_h = self.row_h
+            left_w = max(160, int(sh * 0.38))
+            cx = left_w / 2.0
+            icon_r = min(f_size * 0.55, row_h * 0.4)
+            trophy_cell = icon_r * TROPHY_CELL_MULT
+            trophy_gap = icon_r * TROPHY_GAP_MULT
+            board_w = 5 * trophy_cell + 4 * trophy_gap
+            board_scale = min(1.0, (left_w - 20) / board_w)
+            counter_y = sh - 25 - row_h * 1.1 * 3 - trophy_cell * board_scale - row_h * 0.7
+            self._draw_autosave_counter(counter_y, x_center=cx, group=self.hud_dynamic_group)
 
-        c3x = self.width * 0.78
-        fps_str = f"FPS {state['fps']}"
-        self._draw_text(fps_str, c3x, y1, f_size)
+    def draw_hud_extra(self, btn_dist, btn_color, show_hatch, carrier_idx, min_d, target_en):
+        self.hud_extra_group.clear()
+        sw, sh = self.width, self.height
+        is_landscape = (sw > sh)
+        if not is_landscape:
+            if not hasattr(self, 'maze_top'): return
+            f_size = self.f_size
+            row_h = self.row_h
+            autosave_h = getattr(self, 'autosave_h', int(row_h * 0.9))
+            row3_cy = maze_top_ = self.maze_top + autosave_h / 2
+            icon_r = min(f_size * 0.55, row_h * 0.4)
+            max_icon_r = row_h * 0.38
+            sc = min(self.maze_scale * 0.5, max_icon_r * 2.0 / CELL_SIZE)
 
-        cc = state.get('color_counts', ())
-        dc = state.get('door_counts', ())
-        total_enemies = sum(cc)
-        x_pos = 15
-        x_pos = self._draw_labeled_colored(
-            "Enemies:", total_enemies, cc, self.color_palette, x_pos, y2, f_size)
+            c1x = sw * 0.36
+            big_diam = icon_r * 2.8
+            self.hud_extra_group.add(Color(0, 1, 0.5))
+            self.hud_extra_group.add(Ellipse(pos=(c1x, row3_cy - icon_r), size=(icon_r * 2, icon_r * 2)))
+            self.hud_extra_group.add(Color(0, 0, 0))
+            self.hud_extra_group.add(Ellipse(pos=(c1x + icon_r * 0.2, row3_cy + icon_r * 0.1), size=(icon_r * 0.15, icon_r * 0.15)))
+            self.hud_extra_group.add(Ellipse(pos=(c1x + icon_r * 0.65, row3_cy + icon_r * 0.1), size=(icon_r * 0.15, icon_r * 0.15)))
+            cx_t = c1x + icon_r * 2 + 6
+            if btn_color is not None:
+                rgb = self.color_palette[btn_color] if 0 <= btn_color < len(self.color_palette) else (0.5, 0.5, 0.5)
+                _draw_star(self.hud_extra_group, cx_t + big_diam / 2, row3_cy, big_diam, rgb)
+            elif show_hatch:
+                self._draw_hatch_icon(cx_t + big_diam / 2, row3_cy, big_diam, group=self.hud_extra_group)
+            elif carrier_idx is not None:
+                carrier = next((e for e in self.enemies if e['idx'] == carrier_idx), None)
+                if carrier:
+                    self._draw_hud_enemy(carrier, cx_t + big_diam / 2, row3_cy, scale=sc, group=self.hud_extra_group)
+            cx_t += big_diam + 6
+            val_str = f"{btn_dist}" if btn_dist is not None else "-"
+            self._draw_text(val_str, cx_t, row3_cy, f_size, group=self.hud_extra_group)
 
-        x_pos = 15
-        x_pos = self._draw_labeled_colored(
-            "Doors:", state.get('num_doors', 0), dc, self.color_palette, x_pos, y3, f_size)
+            c2x = sw * 0.64
+            self.hud_extra_group.add(Color(0, 1, 0.5))
+            self.hud_extra_group.add(Ellipse(pos=(c2x, row3_cy - icon_r), size=(icon_r * 2, icon_r * 2)))
+            self.hud_extra_group.add(Color(0, 0, 0))
+            self.hud_extra_group.add(Ellipse(pos=(c2x + icon_r * 0.2, row3_cy + icon_r * 0.1), size=(icon_r * 0.15, icon_r * 0.15)))
+            self.hud_extra_group.add(Ellipse(pos=(c2x + icon_r * 0.65, row3_cy + icon_r * 0.1), size=(icon_r * 0.15, icon_r * 0.15)))
+            cx_t2 = c2x + icon_r * 2 + 6
+            if target_en:
+                self._draw_hud_enemy(target_en, cx_t2 + icon_r, row3_cy, scale=sc, group=self.hud_extra_group)
+            cx_t2 += icon_r * 2 + 6
+            dist_val = min_d
+            self._draw_text(f"{dist_val}" if dist_val < 9999 else "-", cx_t2, row3_cy, f_size, group=self.hud_extra_group)
+        else:
+            f_size = self.f_size
+            row_h = self.row_h
+            left_w = max(160, int(sh * 0.38))
+            cx = left_w / 2.0
 
-        x_pos = 15
-        w = self._draw_text("Ends:", x_pos, y4, f_size); x_pos += w + 6
-        self._draw_text(str(self.target_de), x_pos, y4, f_size)
+            icon_r = min(f_size * 0.55, row_h * 0.4)
+            trophy_cell = icon_r * TROPHY_CELL_MULT
+            trophy_gap = icon_r * TROPHY_GAP_MULT
+            board_w = 5 * trophy_cell + 4 * trophy_gap
+            board_scale = min(1.0, (left_w - 20) / board_w)
+
+            max_icon_r = row_h * 0.38
+            sc = min(self.maze_scale * 0.5, max_icon_r * 2.0 / CELL_SIZE)
+            big_diam = icon_r * 2.2
+
+            extra_base_y = sh - 25 - row_h * 1.1 * 3 - trophy_cell * board_scale - row_h * 0.7
+            row_y = extra_base_y - row_h * 1.2
+
+            self.hud_extra_group.add(Color(0, 1, 0.5))
+            self.hud_extra_group.add(Ellipse(pos=(cx - big_diam - 25, row_y - icon_r), size=(icon_r * 2, icon_r * 2)))
+            self.hud_extra_group.add(Color(0, 0, 0))
+            self.hud_extra_group.add(Ellipse(pos=(cx - big_diam - 25 + icon_r * 0.2, row_y + icon_r * 0.1), size=(icon_r * 0.15, icon_r * 0.15)))
+            self.hud_extra_group.add(Ellipse(pos=(cx - big_diam - 25 + icon_r * 0.65, row_y + icon_r * 0.1), size=(icon_r * 0.15, icon_r * 0.15)))
+
+            icon_cx = cx - 25
+            if btn_color is not None:
+                rgb = self.color_palette[btn_color] if 0 <= btn_color < len(self.color_palette) else (0.5, 0.5, 0.5)
+                _draw_star(self.hud_extra_group, icon_cx, row_y, big_diam, rgb)
+            elif show_hatch:
+                self._draw_hatch_icon(icon_cx, row_y, big_diam, group=self.hud_extra_group)
+            elif carrier_idx is not None:
+                carrier = next((e for e in self.enemies if e['idx'] == carrier_idx), None)
+                if carrier:
+                    self._draw_hud_enemy(carrier, icon_cx, row_y, scale=sc, group=self.hud_extra_group)
+
+            val_str = f"{btn_dist}" if btn_dist is not None else "-"
+            tex_v = get_text_texture(val_str, f_size)
+            self.hud_extra_group.add(Color(1, 1, 1, 1))
+            self.hud_extra_group.add(Rectangle(texture=tex_v, pos=(cx + 10, row_y - tex_v.size[1]/2), size=tex_v.size))
+            row_y -= row_h * 1.2
+
+            self.hud_extra_group.add(Color(0, 1, 0.5))
+            self.hud_extra_group.add(Ellipse(pos=(cx - big_diam - 25, row_y - icon_r), size=(icon_r * 2, icon_r * 2)))
+            self.hud_extra_group.add(Color(0, 0, 0))
+            self.hud_extra_group.add(Ellipse(pos=(cx - big_diam - 25 + icon_r * 0.2, row_y + icon_r * 0.1), size=(icon_r * 0.15, icon_r * 0.15)))
+            self.hud_extra_group.add(Ellipse(pos=(cx - big_diam - 25 + icon_r * 0.65, row_y + icon_r * 0.1), size=(icon_r * 0.15, icon_r * 0.15)))
+
+            if target_en:
+                self._draw_hud_enemy(target_en, icon_cx, row_y, scale=sc, group=self.hud_extra_group)
+
+            dist_val = min_d
+            dist_str = f"{dist_val}" if dist_val < 9999 else "-"
+            tex_d = get_text_texture(dist_str, f_size)
+            self.hud_extra_group.add(Color(1, 1, 1, 1))
+            self.hud_extra_group.add(Rectangle(texture=tex_d, pos=(cx + 10, row_y - tex_d.size[1]/2), size=tex_d.size))
 
     def _update_hud_state(self):
+        static_cur = (self.level, self.num_doors, tuple(self.collected_trophies))
+        if getattr(self, 'hud_static_state', None) != static_cur:
+            self.hud_static_state = static_cur
+            self.draw_hud_static()
+
+        self._update_hud_fps()
+
+        dyn_cur = (self.full_sleep_cycles, self._get_slept_pct())
+        if getattr(self, 'hud_dynamic_state', None) != dyn_cur:
+            self.hud_dynamic_state = dyn_cur
+            self.draw_hud_dynamic()
+
         min_d, min_enemies = 9999, []
         for en in self.enemies:
             d = self.player_dists.get(en['current_cell'], 9999)
@@ -2118,18 +2990,50 @@ class GameWorldLarge(GameWorldBase):
                 min_enemies.append(en)
         target_en = min_enemies[0] if len(min_enemies) == 1 else None
 
-        btn_dist = self.cached_btn_dist
+        btn_dist = None
+        btn_color = None
+        show_hatch = False
+        carrier_idx = None
+        if self.hatch_open:
+            d = self.player_dists.get(self.hatch_pos, 9999)
+            if d < 9999:
+                btn_dist = d
+            show_hatch = True
+        elif self.ground_buttons:
+            min_bd, min_bc, tied = 9999, None, False
+            for pos, cid in self.ground_buttons.items():
+                d = self.player_dists.get(pos, 9999)
+                if d < min_bd:
+                    min_bd, min_bc, tied = d, cid, False
+                elif d == min_bd:
+                    tied = True
+            if min_bd < 9999 and not tied:
+                btn_dist = min_bd
+                btn_color = min_bc
+        else:
+            min_cd, min_ces, tied = 9999, [], False
+            for en in self.enemies:
+                if not en.get('is_carrier', False):
+                    continue
+                d = self.player_dists.get(en['current_cell'], 9999)
+                if d < min_cd:
+                    min_cd, min_ces, tied = d, [en], False
+                elif d == min_cd:
+                    tied = True
+            if min_cd < 9999:
+                btn_dist = min_cd
+                if not tied and min_ces:
+                    carrier_idx = min_ces[0]['idx']
 
-        cur = {'score': len(self.touched_buttons), 'dist_val': min_d,
-               'target_en_idx': target_en['idx'] if target_en else None,
-               'tick': self.enemy_tick_counter, 'num_doors': self.num_doors,
-               'color_counts': self._color_counts_tuple,
-               'door_counts': self._door_counts_tuple,
-               'btn_dist': btn_dist}
-        if getattr(self, 'hud_state', None) != cur:
-            self.hud_state = cur
-            st = dict(cur); st['fps'] = int(Clock.get_fps())
-            self.draw_hud(st, target_en)
+        # Округляем значения для сравнения состояния — панель обновляется реже,
+        # визуально разница незаметна (расстояния меняются шагом 2 выше 4).
+        r_btn = _round_hud_dist(btn_dist)
+        r_min = _round_hud_dist(min_d)
+        extra_cur = (r_btn, btn_color, show_hatch, carrier_idx, r_min,
+                     target_en['idx'] if target_en else None)
+        if getattr(self, 'hud_extra_state', None) != extra_cur:
+            self.hud_extra_state = extra_cur
+            self.draw_hud_extra(r_btn, btn_color, show_hatch, carrier_idx, r_min, target_en)
 
 
 class MazeJoystick(Widget):
@@ -2146,8 +3050,7 @@ class MazeJoystick(Widget):
         cx = self.x + self.width / 2.0
         cy = self.y + self.height / 2.0
         r = min(self.width, self.height) / 2.0
-        dx = x - cx
-        dy = y - cy
+        dx, dy = x - cx, y - cy
         return dx * dx + dy * dy <= r * r
 
     def redraw(self, *args):
@@ -2199,7 +3102,8 @@ class MazeJoystick(Widget):
         self.game.current_joy_dir = Vector(self.sectors[idx]['v'])
         if self.active_sector != idx:
             self.active_sector = idx
-            if self.snd_click and not App.get_running_app().is_muted: self.snd_click.play()
+            if self.snd_click and not App.get_running_app().is_muted:
+                self.snd_click.play()
             self.game.next_dir = Vector(self.sectors[idx]['v'])
             self.redraw()
 
@@ -2238,6 +3142,31 @@ class MuteButton(Widget):
             return True
 
 
+class PlayerIcon(Widget):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind(pos=self.redraw, size=self.redraw)
+
+    def redraw(self, *args):
+        self.canvas.clear()
+        if self.width <= 0 or self.height <= 0:
+            return
+        with self.canvas:
+            Color(0, 1, 0.5)
+            Ellipse(pos=self.pos, size=self.size)
+            cx = self.x + self.width / 2
+            cy = self.y + self.height / 2
+            r = min(self.width, self.height) / 2
+            Color(0, 0, 0)
+            eye_r = r * 0.15
+            eye_off = r * 0.3
+            eye_dy = r * 0.5
+            Ellipse(pos=(cx - eye_off - eye_r, cy + eye_dy - eye_r),
+                    size=(eye_r * 2, eye_r * 2))
+            Ellipse(pos=(cx + eye_off - eye_r, cy + eye_dy - eye_r),
+                    size=(eye_r * 2, eye_r * 2))
+
+
 class LoadingScreen(Screen):
     def on_enter(self):
         _schedule_canvas_refresh()
@@ -2251,66 +3180,96 @@ class LoadingScreen(Screen):
         self.dot_count = (self.dot_count % 3) + 1
         self.lbl.text = f"Generating{'.' * self.dot_count}"
 
+    def _generate_grid(self, mode):
+        if mode == MODE_10:
+            gen = MazeGenerator10()
+        elif mode == MODE_20:
+            gen = MazeGenerator20(MAZE_W, MAZE_H, NUM_DEAD_ENDS)
+        elif mode == MODE_50:
+            gen = MazeGeneratorLarge(50, 50)
+        else:
+            gen = MazeGeneratorLarge(100, 100)
+        return {
+            'version': MAP_VERSION,
+            'grid': gen.grid,
+            'p_spawn': gen.p_spawn,
+            'target_de': gen.target_de,
+            'dead_ends': gen.dead_ends,
+            'level': App.get_running_app().current_level,
+        }
+
     def generate_maze(self):
         app = App.get_running_app()
         mode = CURRENT_MODE
         map_file = get_map_file()
 
-        if mode == MODE_20:
-            loaded = None
-            if os.path.exists(map_file):
+        max_attempts = 12
+        success = False
+
+        for attempt in range(max_attempts):
+            pre_data = None
+
+            if attempt == 0 and os.path.exists(map_file):
                 try:
                     with open(map_file, 'rb') as f:
                         d = pickle.load(f)
-                        if d.get('version') == MAP_VERSION:
-                            loaded = d
+                    if d.get('version') == MAP_VERSION and 'door_colors' in d:
+                        if mode in (MODE_50, MODE_100):
+                            if d.get('level') == getattr(app, 'current_level', 1):
+                                pre_data = d
+                        else:
+                            pre_data = d
                 except Exception:
-                    loaded = None
-            if loaded is not None:
-                app.pre_gen_data = loaded
-                app.current_level = loaded.get('level', 1)
+                    pre_data = None
+
+            if pre_data is None:
+                pre_data = self._generate_grid(mode)
+
+            grid = pre_data.get('grid')
+            if not grid:
+                continue
+            w = len(grid[0])
+            h = len(grid)
+            dead_ends_set = set(pre_data.get('dead_ends', []))
+
+            doors, door_colors, pocket_cells = _compute_doors_with_corridor_check(
+                grid, w, h, dead_ends_set, num_colors=5)
+            if doors is not None:
+                pre_data['door_edges'] = doors
+                pre_data['door_colors'] = door_colors
+                pre_data['pocket_cells'] = list(pocket_cells)
+                app.pre_gen_data = pre_data
+                if mode in (MODE_10, MODE_20):
+                    app.current_level = pre_data.get('level', 1)
+                try:
+                    with open(map_file, 'wb') as f:
+                        pickle.dump(pre_data, f)
+                except Exception:
+                    pass
+                success = True
+                break
             else:
-                gen = MazeGenerator20(MAZE_W, MAZE_H, NUM_DEAD_ENDS)
-                app.pre_gen_data = {
-                    'version': MAP_VERSION, 'grid': gen.grid, 'buttons': gen.buttons,
-                    'p_spawn': gen.p_spawn, 'e_spawns': gen.e_spawns,
-                    'target_de': gen.target_de, 'dead_ends': gen.dead_ends,
-                    'dead_end_positions': gen.dead_end_positions,
-                    'level': app.current_level,
-                }
                 try:
-                    with open(map_file, 'wb') as f:
-                        pickle.dump(app.pre_gen_data, f)
-                except Exception:
+                    if os.path.exists(map_file):
+                        os.remove(map_file)
+                except OSError:
                     pass
-        else:
-            level = getattr(app, 'current_level', 1)
-            app.pre_gen_data = None
-            if os.path.exists(map_file):
-                try:
-                    with open(map_file, 'rb') as f:
-                        d = pickle.load(f)
-                        if d.get('version') == MAP_VERSION and d.get('level') == level:
-                            app.pre_gen_data = d
-                except Exception:
-                    app.pre_gen_data = None
-            if not app.pre_gen_data:
-                if mode == MODE_50:
-                    gen = MazeGeneratorLarge(50, 50, 625, 690, num_enemies=50)
-                else:
-                    gen = MazeGeneratorLarge(100, 100, 2500, 2750, num_enemies=100)
-                app.pre_gen_data = {
-                    'version': MAP_VERSION, 'level': level, 'grid': gen.grid,
-                    'buttons': gen.buttons, 'p_spawn': gen.p_spawn,
-                    'e_spawns': gen.e_spawns, 'target_de': gen.target_de,
-                    'dead_ends': gen.dead_ends,
-                    'dead_end_positions': gen.dead_end_positions,
-                }
-                try:
-                    with open(map_file, 'wb') as f:
-                        pickle.dump(app.pre_gen_data, f)
-                except Exception:
-                    pass
+
+        if not success:
+            pre_data = self._generate_grid(mode)
+            grid = pre_data['grid']
+            dead_ends_set = set(pre_data['dead_ends'])
+            doors, door_colors, pocket_cells = _place_doors_no_corridor_check(
+                grid, dead_ends_set, num_colors=5)
+            pre_data['door_edges'] = doors
+            pre_data['door_colors'] = door_colors
+            pre_data['pocket_cells'] = list(pocket_cells)
+            app.pre_gen_data = pre_data
+            try:
+                with open(map_file, 'wb') as f:
+                    pickle.dump(pre_data, f)
+            except Exception:
+                pass
 
         app.is_restarting = False
         Clock.schedule_once(lambda dt: setattr(self.manager, 'current', 'game'), 0)
@@ -2324,7 +3283,12 @@ class GameScreen(Screen):
     def on_enter(self):
         _schedule_canvas_refresh()
         self.f = FloatLayout()
-        self.game = GameWorld20() if CURRENT_MODE == MODE_20 else GameWorldLarge()
+        if CURRENT_MODE == MODE_10:
+            self.game = GameWorld10()
+        elif CURRENT_MODE == MODE_20:
+            self.game = GameWorld20()
+        else:
+            self.game = GameWorldLarge()
         self.f.add_widget(self.game)
 
         self.joystick = MazeJoystick(self.game, size_hint=(None, None))
@@ -2343,36 +3307,50 @@ class GameScreen(Screen):
         sw, sh = self.width, self.height
         if sw <= 0 or sh <= 0:
             return
+        game = getattr(self, 'game', None)
+        is_landscape = (sw > sh)
 
-        f_size = max(14, int(sw / 40))
-        row_h = int(f_size * 1.8)
-        hud_h = row_h * 4
+        if not is_landscape:
+            f_size, row_h, trophy_h, autosave_h, hud_h = _compute_hud_dims(sw, False)
 
-        maze_size = sw
-        maze_top = sh - hud_h
-        maze_bottom = maze_top - maze_size
+            maze_size = min(sw, sh - hud_h)
+            maze_top = sh - hud_h
+            maze_bottom = maze_top - maze_size
+            if maze_bottom < MIN_JOY_SIZE:
+                maze_size = max(MIN_JOY_SIZE, sh - hud_h - MIN_JOY_SIZE)
+                maze_size = min(maze_size, sw)
+                maze_bottom = sh - hud_h - maze_size
 
-        if maze_bottom < MIN_JOY_SIZE:
-            maze_size = max(MIN_JOY_SIZE, sh - hud_h - MIN_JOY_SIZE)
-            maze_size = min(maze_size, sw)
-            maze_bottom = sh - hud_h - maze_size
+            avail_h = max(0, maze_bottom)
+            joy_size = min(sw, avail_h)
+            if joy_size < MIN_JOY_SIZE:
+                joy_size = min(MIN_JOY_SIZE, max(avail_h, MIN_JOY_SIZE))
+            joy_x = (sw - joy_size) / 2.0
+            joy_y = max(0.0, (avail_h - joy_size) / 2.0)
+            self.joystick.size = (joy_size, joy_size)
+            self.joystick.pos = (joy_x, joy_y)
 
-        avail_h = max(0, maze_bottom)
+            ms = max(60, min(120, int(sw / 8)))
+            self.mute_btn.size = (ms, ms)
+            self.mute_btn.pos = (sw - ms - 10, sh - ms - 10)
+        else:
+            f_size, row_h, trophy_h, autosave_h, hud_h = _compute_hud_dims(sh, False)
+            left_w = max(160, int(sh * 0.38))
+            right_w = max(MIN_JOY_SIZE, int(sh * 0.4))
 
-        joy_size = min(sw, avail_h)
-        if joy_size < MIN_JOY_SIZE:
-            joy_size = min(MIN_JOY_SIZE, max(avail_h, MIN_JOY_SIZE))
-        joy_x = (sw - joy_size) / 2.0
-        joy_y = max(0.0, (avail_h - joy_size) / 2.0)
+            joy_size = min(right_w - 20, sh - 20)
+            joy_size = max(MIN_JOY_SIZE, joy_size)
+            joy_x = sw - right_w + (right_w - joy_size) / 2.0
+            joy_y = (sh - joy_size) / 2.0
+            self.joystick.size = (joy_size, joy_size)
+            self.joystick.pos = (joy_x, joy_y)
 
-        self.joystick.size = (joy_size, joy_size)
-        self.joystick.pos = (joy_x, joy_y)
+            ms = max(50, min(90, int(sh / 8)))
+            self.mute_btn.size = (ms, ms)
+            self.mute_btn.pos = (left_w - ms - 10, sh - ms - 10)
 
-        ms = max(40, min(80, int(sw / 12)))
-        self.mute_btn.size = (ms, ms)
-        self.mute_btn.pos = (sw - ms - 10, sh - ms - 10)
-
-        self.game.trigger_static_redraw()
+        if game is not None:
+            game.trigger_static_redraw()
 
     def on_leave(self):
         self.unbind(size=self._relayout, pos=self._relayout)
@@ -2394,15 +3372,13 @@ class GameScreen(Screen):
         else:
             lbl = Label(text="Defeat", font_size='23sp', color=(1, 0, 0, 0.7),
                         bold=True, pos_hint={'center_y': 0.6})
-            btn_last = Button(text='Last', font_size='22sp',
-                              size_hint=(1.0, 0.15),
+            btn_last = Button(text='Last', font_size='22sp', size_hint=(1.0, 0.15),
                               pos_hint={'center_x': 0.5, 'y': 0.12})
             btn_last.bind(on_release=lambda x: self.restart_from('last'))
             overlay.add_widget(lbl)
             overlay.add_widget(btn_last)
             if has_any_save():
-                btn_prev = Button(text='Prev', font_size='13sp',
-                                  size_hint=(0.4, 0.06),
+                btn_prev = Button(text='Prev', font_size='13sp', size_hint=(0.4, 0.06),
                                   pos_hint={'center_x': 0.5, 'y': 0.02})
                 btn_prev.bind(on_release=lambda x: self.restart_from('pre_last'))
                 overlay.add_widget(btn_prev)
@@ -2435,18 +3411,29 @@ class MenuScreen(Screen):
     def __init__(self, **kw):
         super().__init__(**kw)
         l = FloatLayout()
-        l.add_widget(Label(text="Maze", font_size='50sp', pos_hint={'center_y': 0.85}))
-        for y, text, mode in [(0.60, '100x100', MODE_100),
-                              (0.44, '50x50', MODE_50),
-                              (0.28, '20x20', MODE_20)]:
-            btn = Button(text=text, font_size='30sp', bold=True,
-                         size_hint=(.6, .12), pos_hint={'center_x': .5, 'center_y': y})
+        self._icon = PlayerIcon(size_hint=(None, None))
+        l.add_widget(self._icon)
+        for y, text, mode in [(0.68, '100x100', MODE_100),
+                              (0.52, '50x50', MODE_50),
+                              (0.36, '20x20', MODE_20),
+                              (0.20, '10x10', MODE_10)]:
+            btn = Button(text=text, font_size='26sp', bold=True,
+                         size_hint=(.6, .11), pos_hint={'center_x': .5, 'center_y': y})
             btn.bind(on_release=lambda x, m=mode: self.start(m))
             l.add_widget(btn)
         self.add_widget(l)
+        self.bind(size=self._update_icon, pos=self._update_icon)
+
+    def _update_icon(self, *args):
+        if not hasattr(self, '_icon'):
+            return
+        sz = max(80, min(self.width, self.height) * 0.22)
+        self._icon.size = (sz, sz)
+        self._icon.pos_hint = {'center_x': 0.5, 'center_y': 0.85}
 
     def on_enter(self):
         _schedule_canvas_refresh()
+        self._update_icon()
 
     def start(self, mode):
         set_current_mode(mode)
@@ -2466,16 +3453,11 @@ class DoorsApp(App):
 
     def build(self):
         global SAVE_DIR
+        SAVE_DIR = os.path.dirname(os.path.abspath(__file__))
         try:
-            SAVE_DIR = self.user_data_dir
             os.makedirs(SAVE_DIR, exist_ok=True)
-        except Exception:
-            SAVE_DIR = os.path.dirname(os.path.abspath(__file__))
-            try:
-                os.makedirs(SAVE_DIR, exist_ok=True)
-            except OSError:
-                pass
-
+        except OSError:
+            pass
         sm = ScreenManager()
         for s, n in [(MenuScreen, 'menu'), (LoadingScreen, 'loading'), (GameScreen, 'game')]:
             sm.add_widget(s(name=n))
