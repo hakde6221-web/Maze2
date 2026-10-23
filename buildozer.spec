@@ -7,7 +7,7 @@ package.domain = org.maze
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,wav
 
-version = 1.0.0
+version = 1.1.0
 
 requirements = python3,kivy,pillow
 
