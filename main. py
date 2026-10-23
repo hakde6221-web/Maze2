@@ -639,19 +639,19 @@ SND_VICTORY_PATH = SoundGenerator.create_beep(
     [0.20, 0.20, 0.20, 0.30, 0.60, 1.50], "victory")
 
 _ENEMY_DROP_SPECS = [
-    ([440, 330],              [0.1, 0.1], "enemy_drop_0v2"),   # красный:  низкий нисходящий
-    ([523, 659],              [0.1, 0.1], "enemy_drop_1v2"),   # зелёный:  средний восходящий
-    ([880, 660],              [0.1, 0.1], "enemy_drop_2v2"),   # жёлтый:   высокий нисходящий
-    ([392, 466],              [0.1, 0.1], "enemy_drop_3v2"),   # голубой:  низкий восходящий (малая терция)
-    ([1760, 1319],            [0.1, 0.1], "enemy_drop_4v2"),   # белый:    очень высокий нисходящий
+    ([440, 330],              [0.1, 0.1], "enemy_drop_0v2"),
+    ([523, 659],              [0.1, 0.1], "enemy_drop_1v2"),
+    ([880, 660],              [0.1, 0.1], "enemy_drop_2v2"),
+    ([392, 466],              [0.1, 0.1], "enemy_drop_3v2"),
+    ([1760, 1319],            [0.1, 0.1], "enemy_drop_4v2"),
 ]
 
 _ENEMY_PICKUP_SPECS = [
-    ([440, 330, 262, 196],    [0.1, 0.1, 0.1, 0.1], "enemy_pickup_0v2"),  # красный:  полный низкий спуск
-    ([523, 659, 784, 1047],   [0.1, 0.1, 0.1, 0.1], "enemy_pickup_1v2"),  # зелёный:  полное мажорное восхождение
-    ([880, 660, 880, 660],    [0.1, 0.1, 0.1, 0.1], "enemy_pickup_2v2"),  # жёлтый:   трель (высокий ↔ средний)
-    ([392, 466, 392, 466],    [0.1, 0.1, 0.1, 0.1], "enemy_pickup_3v2"),  # голубой:  трель (низкий ↔ средний, малая терция)
-    ([1760, 1319, 1047, 784], [0.1, 0.1, 0.1, 0.1], "enemy_pickup_4v2"),  # белый:    полный очень высокий спуск
+    ([440, 330, 262, 196],    [0.1, 0.1, 0.1, 0.1], "enemy_pickup_0v2"),
+    ([523, 659, 784, 1047],   [0.1, 0.1, 0.1, 0.1], "enemy_pickup_1v2"),
+    ([880, 660, 880, 660],    [0.1, 0.1, 0.1, 0.1], "enemy_pickup_2v2"),
+    ([392, 466, 392, 466],    [0.1, 0.1, 0.1, 0.1], "enemy_pickup_3v2"),
+    ([1760, 1319, 1047, 784], [0.1, 0.1, 0.1, 0.1], "enemy_pickup_4v2"),
 ]
 
 SND_ENEMY_DROP_PATHS = [SoundGenerator.create_beep(f, d, n) for f, d, n in _ENEMY_DROP_SPECS]
@@ -2916,6 +2916,31 @@ class GameWorldLarge(GameWorldBase):
         mc = en.get('mark_color', (0, 0, 0))
         group.add(Color(*mc))
         group.add(Line(circle=(cx, cy, 18 * scale, a_s, a_e), width=2 * scale))
+
+        # --- звезда на теле носителя (для carrier) — как в лабиринте ---
+        if en.get('is_carrier', False):
+            cycle_set = getattr(self, 'sleep_cycle_set', None)
+            alpha = 0.4 if (cycle_set is not None and en['idx'] in cycle_set) else 1.0
+            outer_r = ((CELL_SIZE - 4) * scale) / 2.0
+            inner_r = outer_r * 0.382
+            star_verts = []
+            for i in range(10):
+                angle = math.pi / 2 + i * math.pi / 5
+                rr = outer_r if i % 2 == 0 else inner_r
+                spx, spy = rr * math.cos(angle), rr * math.sin(angle)
+                if   dx == 0 and dy == 1:  rx, ry = spx, spy
+                elif dx == 1 and dy == 0:  rx, ry = spy, -spx
+                elif dx == 0 and dy == -1: rx, ry = -spx, -spy
+                elif dx == -1 and dy == 0: rx, ry = -spy, spx
+                else:                      rx, ry = spx, spy
+                star_verts.append((cx + rx, cy + ry))
+            group.add(Color(mc[0], mc[1], mc[2], alpha))
+            for i in range(10):
+                x1, y1 = star_verts[i]
+                x2, y2 = star_verts[(i + 1) % 10]
+                group.add(Triangle(points=[cx, cy, x1, y1, x2, y2]))
+        # --- конец звёзды ---
+
         pts = DOT_PATTERNS[en['pattern_idx']] if 0 <= en['pattern_idx'] < len(DOT_PATTERNS) else []
         rad, dsz = 3 * scale, 6 * scale
         for i, (px, py) in enumerate(pts):
