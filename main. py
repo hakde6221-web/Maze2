@@ -1638,9 +1638,13 @@ class GameWorldBase(Widget):
                 return
             row_h = self.row_h
             top_row_cy = self.maze_top + self.hud_h - row_h / 2
-            btn_sz = max(60, min(120, int(sw / 8)))
-            fps_x = sw - btn_sz - 15 - fps_tex.size[0] - 10
-            self._hud_fps_rect.pos = (fps_x, top_row_cy - fps_tex.size[1] / 2)
+            # FPS после "Doors:x"
+            level_tex = get_text_texture(f"Level-{getattr(self, 'level', 1)}", f_size)
+            doors_label_tex = get_text_texture("Doors:", f_size)
+            doors_num_tex = get_text_texture(str(getattr(self, 'num_doors', 0)), f_size)
+            end_x = (15 + level_tex.size[0] + 20
+                     + doors_label_tex.size[0] + 6 + doors_num_tex.size[0] + 15)
+            self._hud_fps_rect.pos = (end_x, top_row_cy - fps_tex.size[1] / 2)
         else:
             row_h = self.row_h
             left_w = max(160, int(sh * 0.38))
@@ -1796,6 +1800,8 @@ class GameWorldBase(Widget):
     def update(self, dt):
         if not self.active: return
         app = App.get_running_app()
+        # ПАУЗА: ранний выход до любого изменения состояния
+        if getattr(app, 'is_paused', False): return
         self.time_accumulator = min(self.time_accumulator + dt, 0.25)
         sub_steps, state_dirty = 0, False
 
@@ -2266,6 +2272,7 @@ class GameWorldStatic(GameWorldBase):
         self.draw_entities()
         self.hud_static_state = None
         self.hud_dynamic_state = None
+        self._last_fps_shown = None
         self._update_hud_state()
         _schedule_canvas_refresh()
 
@@ -2736,6 +2743,7 @@ class GameWorldLarge(GameWorldBase):
         self.hud_static_state = None
         self.hud_dynamic_state = None
         self.hud_extra_state = None
+        self._last_fps_shown = None
         self._update_hud_state()
         _schedule_canvas_refresh()
 
@@ -3269,6 +3277,9 @@ class MazeJoystick(Widget):
             self.redraw()
 
     def handle(self, t):
+        # На паузе игнорируем ввод джойстика — чтобы пауза не работала как буфер ввода
+        if getattr(App.get_running_app(), 'is_paused', False):
+            return
         cx, cy = self.x + self.width / 2.0, self.y + self.height / 2.0
         r = min(self.width, self.height) / 2.0
         dx, dy = t.x - cx, t.y - cy
@@ -3315,6 +3326,47 @@ class MuteButton(Widget):
         if self.collide_point(*t.pos):
             app = App.get_running_app()
             app.is_muted = not getattr(app, 'is_muted', False)
+            self.redraw()
+            return True
+
+
+class PauseButton(Widget):
+    """Круглая кнопка цвета стен с иконкой play (когда пауза) или двух палочек (когда игра идёт)."""
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind(pos=self.redraw, size=self.redraw)
+
+    def redraw(self, *args):
+        self.canvas.clear()
+        if self.width <= 0: return
+        app = App.get_running_app()
+        paused = getattr(app, 'is_paused', False) if app else False
+        cx, cy, r = self.x + self.width / 2, self.y + self.height / 2, self.width / 2
+        with self.canvas:
+            Color(*WALL_COLOR); Ellipse(pos=(self.x, self.y), size=(self.width, self.height))
+            Color(0.15, 0.15, 0.15)
+            ot = max(3, self.width * 0.08)
+            Ellipse(pos=(self.x + ot / 2, self.y + ot / 2), size=(self.width - ot, self.height - ot))
+            Color(*TEXT_COLOR)
+            if paused:
+                tri_w = r * 0.6
+                tri_h = r * 0.7
+                Triangle(points=[
+                    cx - tri_w / 3, cy - tri_h / 2,
+                    cx - tri_w / 3, cy + tri_h / 2,
+                    cx + 2 * tri_w / 3, cy,
+                ])
+            else:
+                bar_w = r * 0.18
+                bar_h = r * 0.7
+                gap = r * 0.18
+                Rectangle(pos=(cx - gap / 2 - bar_w, cy - bar_h / 2), size=(bar_w, bar_h))
+                Rectangle(pos=(cx + gap / 2, cy - bar_h / 2), size=(bar_w, bar_h))
+
+    def on_touch_down(self, t):
+        if self.collide_point(*t.pos):
+            app = App.get_running_app()
+            app.is_paused = not getattr(app, 'is_paused', False)
             self.redraw()
             return True
 
@@ -3479,6 +3531,8 @@ class LoadingScreen(Screen):
 class GameScreen(Screen):
     def on_enter(self):
         _schedule_canvas_refresh()
+        # Новая партия всегда стартует с не-паузы
+        App.get_running_app().is_paused = False
         self.f = FloatLayout()
         if CURRENT_MODE == MODE_10:
             self.game = GameWorld10()
@@ -3494,6 +3548,9 @@ class GameScreen(Screen):
 
         self.mute_btn = MuteButton(size_hint=(None, None))
         self.f.add_widget(self.mute_btn)
+
+        self.pause_btn = PauseButton(size_hint=(None, None))
+        self.f.add_widget(self.pause_btn)
 
         self.add_widget(self.f)
         self.bind(size=self._relayout, pos=self._relayout)
@@ -3528,8 +3585,12 @@ class GameScreen(Screen):
             self.joystick.pos = (joy_x, joy_y)
 
             ms = max(60, min(120, int(sw / 8)))
+            # Кнопка звука — у правого верхнего края
             self.mute_btn.size = (ms, ms)
             self.mute_btn.pos = (sw - ms - 10, sh - ms - 10)
+            # Кнопка паузы — слева от неё
+            self.pause_btn.size = (ms, ms)
+            self.pause_btn.pos = (sw - 2 * ms - 20, sh - ms - 10)
         else:
             f_size, row_h, trophy_h, autosave_h, hud_h = _compute_hud_dims(sh, False)
             left_w = max(160, int(sh * 0.38))
@@ -3545,6 +3606,8 @@ class GameScreen(Screen):
             ms = max(50, min(90, int(sh / 8)))
             self.mute_btn.size = (ms, ms)
             self.mute_btn.pos = (left_w - ms - 10, sh - ms - 10)
+            self.pause_btn.size = (ms, ms)
+            self.pause_btn.pos = (left_w - 2 * ms - 20, sh - ms - 10)
 
         if game is not None:
             game.trigger_static_redraw()
@@ -3678,6 +3741,7 @@ class DoorsApp(App):
     pre_gen_data = None
     is_restarting = False
     is_muted = False
+    is_paused = False
     load_slot = 'last'
 
     def build(self):
@@ -3696,6 +3760,31 @@ class DoorsApp(App):
         _schedule_canvas_refresh()
         Clock.schedule_once(_force_canvas_refresh, 1.5)
         Clock.schedule_once(_force_canvas_refresh, 3.0)
+
+    def on_pause(self):
+        """Автоматическая пауза при сворачивании (Android). Возвращаем True, чтобы ОС
+        не убивала приложение и позволила возобновить работу без потери состояния."""
+        self.is_paused = True
+        try:
+            screen = self.root.current_screen
+            if hasattr(screen, 'pause_btn'):
+                screen.pause_btn.redraw()
+        except Exception:
+            pass
+        return True
+
+    def on_resume(self):
+        """После разворачивания: перерисовать текущую игру (лечит чёрный экран)
+        и обновить канвас. Игровое состояние не трогаем — пауза сама по себе
+        не снимается, игрок жмёт play."""
+        try:
+            screen = self.root.current_screen
+            if hasattr(screen, 'game') and hasattr(screen.game, 'trigger_static_redraw'):
+                Clock.schedule_once(lambda dt: screen.game.trigger_static_redraw(), 0.1)
+            else:
+                _schedule_canvas_refresh()
+        except Exception:
+            _schedule_canvas_refresh()
 
 
 if __name__ == '__main__':
