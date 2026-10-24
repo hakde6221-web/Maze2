@@ -1857,8 +1857,19 @@ class GameWorldBase(Widget):
                         else:
                             self.interactive_redraw_needed = True
                     if self.hatch_open and (gx, gy) == self.hatch_pos:
+                        if (gx, gy) in self.union_visible_cells:
+                            self.active = False
+                            if self.snd_lose and not app.is_muted: self.snd_lose.play()
+                            app.root.get_screen('game').show_overlay('lose')
+                            return
                         self.active = False
                         if self.snd_victory and not app.is_muted: self.snd_victory.play()
+                        self.player_group.clear()
+                        self.hatch_open = False
+                        if self.IS_LARGE:
+                            self.draw_interactive(gx, gy)
+                        else:
+                            self.draw_interactive()
                         delete_all_saves()
                         app.root.get_screen('game').show_overlay('win')
                         return
@@ -2092,7 +2103,7 @@ class GameWorldStatic(GameWorldBase):
         self._prepare_door_data()
         self._prepare_cell_avails()
 
-        self.p_speed = 1
+        self.p_speed = 1.1
         p_spawn = data['p_spawn']
         self.hatch_pos = tuple(p_spawn)
 
@@ -2540,7 +2551,7 @@ class GameWorldLarge(GameWorldBase):
         self._prepare_door_data()
         self._prepare_cell_avails()
 
-        self.p_speed = 1
+        self.p_speed = 1.1
         p_spawn = data['p_spawn']
         self.hatch_pos = tuple(p_spawn)
 
@@ -3550,39 +3561,50 @@ class GameScreen(Screen):
         if state == 'win':
             lbl = Label(text="Victory", font_size='50sp', color=(0, 1, 0, 0.5),
                         bold=True, pos_hint={'center_y': 0.6})
-            btn = Button(text=f'Level {App.get_running_app().current_level + 1}',
-                         size_hint=(0.8, 0.1), pos_hint={'center_x': 0.5, 'y': 0.05},
-                         color=(*TEXT_COLOR, 1))
-            btn.bind(on_release=lambda x: self.next_lvl())
             overlay.add_widget(lbl)
-            overlay.add_widget(btn)
+            self.f.add_widget(overlay)
+
+            def _show_win_btn(dt):
+                btn = Button(text=f'Level {App.get_running_app().current_level + 1}',
+                             size_hint=(0.8, 0.1), pos_hint={'center_x': 0.5, 'y': 0.05},
+                             color=(*TEXT_COLOR, 1))
+                btn.bind(on_release=lambda x: self.next_lvl())
+                overlay.add_widget(btn)
+                _schedule_canvas_refresh()
+
+            Clock.schedule_once(_show_win_btn, 2.0)
         else:
             lbl = Label(text="You were noticed", font_size='23sp', color=(1, 0, 0, 0.5),
                         bold=True, pos_hint={'center_y': 0.6})
-            btn_last = Button(text='Last', font_size='22sp', size_hint=(1.0, 0.15),
-                              pos_hint={'center_x': 0.5, 'y': 0.12},
-                              color=(*TEXT_COLOR, 1))
-            btn_last.bind(on_release=lambda x: self.restart_from('last'))
             overlay.add_widget(lbl)
-            overlay.add_widget(btn_last)
-            if has_any_save():
-                btn_prev = Button(text='Prev', font_size='13sp', size_hint=(0.4, 0.06),
-                                  pos_hint={'center_x': 0.25, 'y': 0.02},
+            self.f.add_widget(overlay)
+
+            def _show_lose_btns(dt):
+                btn_last = Button(text='Last', font_size='22sp', size_hint=(1.0, 0.15),
+                                  pos_hint={'center_x': 0.5, 'y': 0.12},
                                   color=(*TEXT_COLOR, 1))
-                btn_prev.bind(on_release=lambda x: self.restart_from('pre_last'))
-                overlay.add_widget(btn_prev)
-                btn_menu = Button(text='Menu', font_size='13sp', size_hint=(0.4, 0.06),
-                                  pos_hint={'center_x': 0.75, 'y': 0.02},
-                                  color=(*TEXT_COLOR, 1))
-                btn_menu.bind(on_release=lambda x: self.go_menu())
-                overlay.add_widget(btn_menu)
-            else:
-                btn_menu = Button(text='Menu', font_size='13sp', size_hint=(0.4, 0.06),
-                                  pos_hint={'center_x': 0.5, 'y': 0.02},
-                                  color=(*TEXT_COLOR, 1))
-                btn_menu.bind(on_release=lambda x: self.go_menu())
-                overlay.add_widget(btn_menu)
-        self.f.add_widget(overlay)
+                btn_last.bind(on_release=lambda x: self.restart_from('last'))
+                overlay.add_widget(btn_last)
+                if has_any_save():
+                    btn_prev = Button(text='Prev', font_size='13sp', size_hint=(0.4, 0.06),
+                                      pos_hint={'center_x': 0.25, 'y': 0.02},
+                                      color=(*TEXT_COLOR, 1))
+                    btn_prev.bind(on_release=lambda x: self.restart_from('pre_last'))
+                    overlay.add_widget(btn_prev)
+                    btn_menu = Button(text='Menu', font_size='13sp', size_hint=(0.4, 0.06),
+                                      pos_hint={'center_x': 0.75, 'y': 0.02},
+                                      color=(*TEXT_COLOR, 1))
+                    btn_menu.bind(on_release=lambda x: self.go_menu())
+                    overlay.add_widget(btn_menu)
+                else:
+                    btn_menu = Button(text='Menu', font_size='13sp', size_hint=(0.4, 0.06),
+                                      pos_hint={'center_x': 0.5, 'y': 0.02},
+                                      color=(*TEXT_COLOR, 1))
+                    btn_menu.bind(on_release=lambda x: self.go_menu())
+                    overlay.add_widget(btn_menu)
+                _schedule_canvas_refresh()
+
+            Clock.schedule_once(_show_lose_btns, 2.0)
         _schedule_canvas_refresh()
 
     def go_menu(self):
