@@ -2198,6 +2198,16 @@ class GameWorldStatic(GameWorldBase):
 
             self.sleep_cycle_set = set(e['idx'] for e in self.enemies)
 
+            carriers = sum(1 for en in self.enemies if en.get('is_carrier'))
+            if carriers < BUTTONS_TO_OPEN:
+                for en in self.enemies:
+                    if carriers >= BUTTONS_TO_OPEN:
+                        break
+                    if not en.get('is_carrier'):
+                        en['is_carrier'] = True
+                        self._update_carrier_visual(en)
+                        carriers += 1
+
         for en in self.enemies:
             if en.get('is_carrier', False):
                 self._update_carrier_star_visual(en)
@@ -2665,6 +2675,16 @@ class GameWorldLarge(GameWorldBase):
                     slot_idx += 1
 
             self.sleep_cycle_set = set(e['idx'] for e in self.enemies)
+
+            carriers = sum(1 for en in self.enemies if en.get('is_carrier'))
+            if carriers < BUTTONS_TO_OPEN:
+                for en in self.enemies:
+                    if carriers >= BUTTONS_TO_OPEN:
+                        break
+                    if not en.get('is_carrier'):
+                        en['is_carrier'] = True
+                        self._update_carrier_visual(en)
+                        carriers += 1
 
         for en in self.enemies:
             if en.get('is_carrier', False):
