@@ -79,6 +79,8 @@ POCKET_FLOOR_COLOR = (0.15, 0.15, 0.15)
 
 TEXT_COLOR = WALL_COLOR
 
+PAUSE_COLOR = (0.5, 0.8, 1.0)
+
 
 def _compute_hud_dims(sw, has_autosave_digit=False):
     f_size = max(14, int(sw / 30))
@@ -853,6 +855,29 @@ class GameWorldBase(Widget):
         self.checkpoint_color.a = 1.0
         (Animation(a=0.7, duration=1.2) + Animation(a=0.0, duration=0.9, t='in_quad')).start(self.checkpoint_bg_color)
         (Animation(a=1.0, duration=1.2) + Animation(a=0.0, duration=0.9, t='in_quad')).start(self.checkpoint_color)
+
+    def _init_pause_label(self):
+        tex = get_text_texture('Pause', 50)
+        self._pause_size = tex.size
+        self.pause_group = InstructionGroup()
+        self.pause_color = Color(PAUSE_COLOR[0], PAUSE_COLOR[1], PAUSE_COLOR[2], 0.0)
+        self.pause_rect = Rectangle(texture=tex, pos=(-1000, -1000), size=tex.size)
+        self.pause_group.add(self.pause_color)
+        self.pause_group.add(self.pause_rect)
+        self.canvas.add(self.pause_group)
+        self._pause_shown = False
+
+    def _show_pause_label(self, show):
+        prev = getattr(self, '_pause_shown', False)
+        if show:
+            sw, sh = self.width, self.height
+            tw, th = self._pause_size
+            cx = (sw - tw) / 2.0
+            cy = sh * 0.6 - th / 2.0
+            self.pause_rect.pos = (cx, cy)
+        if show != prev:
+            self._pause_shown = show
+            self.pause_color.a = 0.5 if show else 0.0
 
     def _create_enemy_group(self, pattern_idx, body_color, mark_color):
         egroup = InstructionGroup()
@@ -1638,7 +1663,6 @@ class GameWorldBase(Widget):
                 return
             row_h = self.row_h
             top_row_cy = self.maze_top + self.hud_h - row_h / 2
-            # FPS после "Doors:x"
             level_tex = get_text_texture(f"Level-{getattr(self, 'level', 1)}", f_size)
             doors_label_tex = get_text_texture("Doors:", f_size)
             doors_num_tex = get_text_texture(str(getattr(self, 'num_doors', 0)), f_size)
@@ -1800,8 +1824,10 @@ class GameWorldBase(Widget):
     def update(self, dt):
         if not self.active: return
         app = App.get_running_app()
-        # ПАУЗА: ранний выход до любого изменения состояния
-        if getattr(app, 'is_paused', False): return
+        if getattr(app, 'is_paused', False):
+            self._show_pause_label(True)
+            return
+        self._show_pause_label(False)
         self.time_accumulator = min(self.time_accumulator + dt, 0.25)
         sub_steps, state_dirty = 0, False
 
@@ -1876,7 +1902,6 @@ class GameWorldBase(Widget):
                             self.draw_interactive(gx, gy)
                         else:
                             self.draw_interactive()
-                        delete_all_saves()
                         app.root.get_screen('game').show_overlay('win')
                         return
 
@@ -2117,6 +2142,7 @@ class GameWorldStatic(GameWorldBase):
         self.level_group = InstructionGroup()
         self.canvas.add(self.level_group)
         self._init_checkpoint_label()
+        self._init_pause_label()
 
         self.enemies = []
         save_data = self._load_save_data()
@@ -2566,6 +2592,7 @@ class GameWorldLarge(GameWorldBase):
         self.level_group = InstructionGroup()
         self.canvas.add(self.level_group)
         self._init_checkpoint_label()
+        self._init_pause_label()
 
         self.hud_extra_group = InstructionGroup(); self.canvas.add(self.hud_extra_group)
 
@@ -3277,9 +3304,16 @@ class MazeJoystick(Widget):
             self.redraw()
 
     def handle(self, t):
-        # На паузе игнорируем ввод джойстика — чтобы пауза не работала как буфер ввода
-        if getattr(App.get_running_app(), 'is_paused', False):
-            return
+        # Нажатие на джойстик снимает паузу
+        app = App.get_running_app()
+        if getattr(app, 'is_paused', False):
+            app.is_paused = False
+            try:
+                screen = app.root.current_screen
+                if hasattr(screen, 'pause_btn'):
+                    screen.pause_btn.redraw()
+            except Exception:
+                pass
         cx, cy = self.x + self.width / 2.0, self.y + self.height / 2.0
         r = min(self.width, self.height) / 2.0
         dx, dy = t.x - cx, t.y - cy
@@ -3290,7 +3324,7 @@ class MazeJoystick(Widget):
         self.game.current_joy_dir = Vector(self.sectors[idx]['v'])
         if self.active_sector != idx:
             self.active_sector = idx
-            if self.snd_click and not App.get_running_app().is_muted:
+            if self.snd_click and not app.is_muted:
                 self.snd_click.play()
             self.game.next_dir = Vector(self.sectors[idx]['v'])
             self.redraw()
@@ -3447,10 +3481,27 @@ class LoadingScreen(Screen):
             'level': App.get_running_app().current_level,
         }
 
+    def _write_map_atomic(self, map_file, pre_data):
+        tmp_path = map_file + '.tmp'
+        try:
+            with open(tmp_path, 'wb') as f:
+                pickle.dump(pre_data, f)
+            os.replace(tmp_path, map_file)
+            return True
+        except Exception:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+            return False
+
     def generate_maze(self):
         app = App.get_running_app()
         mode = CURRENT_MODE
         map_file = get_map_file()
+        pending = getattr(app, 'pending_new_level', False)
+        app.pending_new_level = False
 
         max_attempts = 12
         success = False
@@ -3458,16 +3509,12 @@ class LoadingScreen(Screen):
         for attempt in range(max_attempts):
             pre_data = None
 
-            if attempt == 0 and os.path.exists(map_file):
+            if attempt == 0 and not pending and os.path.exists(map_file):
                 try:
                     with open(map_file, 'rb') as f:
                         d = pickle.load(f)
                     if d.get('version') == MAP_VERSION and 'door_colors' in d:
-                        if mode in (MODE_50, MODE_100):
-                            if d.get('level') == getattr(app, 'current_level', 1):
-                                pre_data = d
-                        else:
-                            pre_data = d
+                        pre_data = d
                 except Exception:
                     pre_data = None
 
@@ -3488,21 +3535,22 @@ class LoadingScreen(Screen):
                 pre_data['door_colors'] = door_colors
                 pre_data['pocket_cells'] = list(pocket_cells)
                 app.pre_gen_data = pre_data
-                if mode in (MODE_10, MODE_20):
-                    app.current_level = pre_data.get('level', 1)
-                try:
-                    with open(map_file, 'wb') as f:
-                        pickle.dump(pre_data, f)
-                except Exception:
-                    pass
+                app.current_level = pre_data.get('level', 1)
+
+                map_ok = self._write_map_atomic(map_file, pre_data)
+
+                if pending and map_ok:
+                    delete_all_saves()
+
                 success = True
                 break
             else:
-                try:
-                    if os.path.exists(map_file):
-                        os.remove(map_file)
-                except OSError:
-                    pass
+                if not pending:
+                    try:
+                        if os.path.exists(map_file):
+                            os.remove(map_file)
+                    except OSError:
+                        pass
 
         if not success:
             pre_data = self._generate_grid(mode)
@@ -3514,11 +3562,12 @@ class LoadingScreen(Screen):
             pre_data['door_colors'] = door_colors
             pre_data['pocket_cells'] = list(pocket_cells)
             app.pre_gen_data = pre_data
-            try:
-                with open(map_file, 'wb') as f:
-                    pickle.dump(pre_data, f)
-            except Exception:
-                pass
+            app.current_level = pre_data.get('level', 1)
+
+            map_ok = self._write_map_atomic(map_file, pre_data)
+
+            if pending and map_ok:
+                delete_all_saves()
 
         app.is_restarting = False
         Clock.schedule_once(lambda dt: setattr(self.manager, 'current', 'game'), 0)
@@ -3585,10 +3634,8 @@ class GameScreen(Screen):
             self.joystick.pos = (joy_x, joy_y)
 
             ms = max(60, min(120, int(sw / 8)))
-            # Кнопка звука — у правого верхнего края
             self.mute_btn.size = (ms, ms)
             self.mute_btn.pos = (sw - ms - 10, sh - ms - 10)
-            # Кнопка паузы — слева от неё
             self.pause_btn.size = (ms, ms)
             self.pause_btn.pos = (sw - 2 * ms - 20, sh - ms - 10)
         else:
@@ -3618,6 +3665,9 @@ class GameScreen(Screen):
         self.clear_widgets()
 
     def show_overlay(self, state):
+        # Скрываем надпись Pause при показе любого оверлея
+        if hasattr(self, 'game') and hasattr(self.game, '_show_pause_label'):
+            self.game._show_pause_label(False)
         if hasattr(self, 'joystick') and self.joystick in self.f.children:
             self.f.remove_widget(self.joystick)
         overlay = FloatLayout()
@@ -3649,18 +3699,18 @@ class GameScreen(Screen):
                 btn_last.bind(on_release=lambda x: self.restart_from('last'))
                 overlay.add_widget(btn_last)
                 if has_any_save():
-                    btn_prev = Button(text='Prev', font_size='13sp', size_hint=(0.4, 0.06),
+                    btn_prev = Button(text='Prev', font_size='20sp', size_hint=(0.45, 0.09),
                                       pos_hint={'center_x': 0.25, 'y': 0.02},
                                       color=(*TEXT_COLOR, 1))
                     btn_prev.bind(on_release=lambda x: self.restart_from('pre_last'))
                     overlay.add_widget(btn_prev)
-                    btn_menu = Button(text='Menu', font_size='13sp', size_hint=(0.4, 0.06),
+                    btn_menu = Button(text='Menu', font_size='20sp', size_hint=(0.45, 0.09),
                                       pos_hint={'center_x': 0.75, 'y': 0.02},
                                       color=(*TEXT_COLOR, 1))
                     btn_menu.bind(on_release=lambda x: self.go_menu())
                     overlay.add_widget(btn_menu)
                 else:
-                    btn_menu = Button(text='Menu', font_size='13sp', size_hint=(0.4, 0.06),
+                    btn_menu = Button(text='Menu', font_size='20sp', size_hint=(0.45, 0.09),
                                       pos_hint={'center_x': 0.5, 'y': 0.02},
                                       color=(*TEXT_COLOR, 1))
                     btn_menu.bind(on_release=lambda x: self.go_menu())
@@ -3680,13 +3730,7 @@ class GameScreen(Screen):
         app.is_restarting = False
         app.current_level += 1
         app.load_slot = 'last'
-        delete_all_saves()
-        try:
-            map_file = get_map_file()
-            if os.path.exists(map_file):
-                os.remove(map_file)
-        except OSError:
-            pass
+        app.pending_new_level = True
         self.manager.current = 'loading'
 
     def restart_from(self, slot):
@@ -3743,6 +3787,7 @@ class DoorsApp(App):
     is_muted = False
     is_paused = False
     load_slot = 'last'
+    pending_new_level = False
 
     def build(self):
         global SAVE_DIR
@@ -3762,8 +3807,6 @@ class DoorsApp(App):
         Clock.schedule_once(_force_canvas_refresh, 3.0)
 
     def on_pause(self):
-        """Автоматическая пауза при сворачивании (Android). Возвращаем True, чтобы ОС
-        не убивала приложение и позволила возобновить работу без потери состояния."""
         self.is_paused = True
         try:
             screen = self.root.current_screen
@@ -3774,9 +3817,6 @@ class DoorsApp(App):
         return True
 
     def on_resume(self):
-        """После разворачивания: перерисовать текущую игру (лечит чёрный экран)
-        и обновить канвас. Игровое состояние не трогаем — пауза сама по себе
-        не снимается, игрок жмёт play."""
         try:
             screen = self.root.current_screen
             if hasattr(screen, 'game') and hasattr(screen.game, 'trigger_static_redraw'):
