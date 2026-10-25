@@ -22,6 +22,7 @@ from kivy.vector import Vector
 from kivy.core.audio import SoundLoader
 from kivy.core.text import Label as CoreLabel
 from kivy.core.window import Window
+from kivy.metrics import sp
 from kivy.animation import Animation
 
 CELL_SIZE, WALL_THICK = 40, 10
@@ -857,7 +858,7 @@ class GameWorldBase(Widget):
         (Animation(a=1.0, duration=1.2) + Animation(a=0.0, duration=0.9, t='in_quad')).start(self.checkpoint_color)
 
     def _init_pause_label(self):
-        tex = get_text_texture('Pause', 50)
+        tex = get_text_texture('Pause', int(sp(50)))
         self._pause_size = tex.size
         self.pause_group = InstructionGroup()
         self.pause_color = Color(PAUSE_COLOR[0], PAUSE_COLOR[1], PAUSE_COLOR[2], 0.0)
@@ -3304,7 +3305,6 @@ class MazeJoystick(Widget):
             self.redraw()
 
     def handle(self, t):
-        # Нажатие на джойстик снимает паузу
         app = App.get_running_app()
         if getattr(app, 'is_paused', False):
             app.is_paused = False
@@ -3580,7 +3580,6 @@ class LoadingScreen(Screen):
 class GameScreen(Screen):
     def on_enter(self):
         _schedule_canvas_refresh()
-        # Новая партия всегда стартует с не-паузы
         App.get_running_app().is_paused = False
         self.f = FloatLayout()
         if CURRENT_MODE == MODE_10:
@@ -3665,7 +3664,6 @@ class GameScreen(Screen):
         self.clear_widgets()
 
     def show_overlay(self, state):
-        # Скрываем надпись Pause при показе любого оверлея
         if hasattr(self, 'game') and hasattr(self.game, '_show_pause_label'):
             self.game._show_pause_label(False)
         if hasattr(self, 'joystick') and self.joystick in self.f.children:
@@ -3693,7 +3691,7 @@ class GameScreen(Screen):
             self.f.add_widget(overlay)
 
             def _show_lose_btns(dt):
-                btn_last = Button(text='Last', font_size='22sp', size_hint=(1.0, 0.15),
+                btn_last = Button(text='Last', font_size='22sp', size_hint=(0.45, 0.15),
                                   pos_hint={'center_x': 0.5, 'y': 0.12},
                                   color=(*TEXT_COLOR, 1))
                 btn_last.bind(on_release=lambda x: self.restart_from('last'))
