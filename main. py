@@ -245,28 +245,18 @@ _BASE_MASKS = list(_SYM_MASKS) + list(_ASYM_MASKS)
 _base_set = set(_BASE_MASKS)
 _base_count = len(_BASE_MASKS)
 
-# 60 дополнительных масок: самые разреженные (мало точек) из ещё не занятых
 _candidates = [m for m in range(1, 512) if m not in _base_set]
 _candidates.sort(key=lambda m: (bin(m).count('1'), m))
 _EXTRA_MASKS = _candidates[:60]
 
-# Базовый пул: те же 100 масок, что и раньше, порядок: по убыванию точек
 _BASE_SORTED = sorted(_BASE_MASKS, key=lambda m: (-bin(m).count('1'), m))
-# Расширения: по убыванию точек
 _EXTRA_SORTED = sorted(_EXTRA_MASKS, key=lambda m: (-bin(m).count('1'), m))
-# Общий пул: сначала базовые, потом расширения (в сумме 160)
 _ALL_MASKS_ORDERED = _BASE_SORTED + _EXTRA_SORTED
 _full_count = len(_ALL_MASKS_ORDERED)
 
 DOT_PATTERNS = [_mask_to_positions(m) for m in _ALL_MASKS_ORDERED]
 
-# Распределение базового пула по 5 цветам.
-# Интерливинг: список по точкам идёт [red, green, yellow, blue, white, red, green, ...],
-# то есть позиция p в общем списке по точкам соответствует цвету p % 5.
-# Внутри одного цвета порядок в индексе совпадает с порядком в общем списке по точкам.
 _BASE_PATTERNS_BY_COLOR = [list(range(c, _base_count, 5)) for c in range(5)]
-
-# Распределение расширенного пула (40x40) — то же самое, но на 160 масок.
 _FULL_PATTERNS_BY_COLOR = [list(range(c, _full_count, 5)) for c in range(5)]
 
 PATTERNS_10_BY_COLOR = [_BASE_PATTERNS_BY_COLOR[c][:2] for c in range(5)]
@@ -1892,17 +1882,8 @@ class GameWorldBase(Widget):
                         return
 
                 avail = self.get_avail(gx, gy)
-                # --- УДЕРЖАНИЕ ДЖОЙСТИКА: пока палец на джойстике, каждый кадр
-                # подставляем текущее направление как next_dir. Это даёт тот же
-                # эффект, что и многократные нажатия, но без «дребезга» пальца.
-                # При отпускании current_joy_dir становится None — эффект
-                # прекращается ровно в момент отпускания.
                 if self.current_joy_dir is not None:
                     self.next_dir = self.current_joy_dir
-                # --- АВТООСТАНОВКА ПОСЛЕ КАЖДОЙ КЛЕТКИ ---
-                # По прибытии в клетку всегда останавливаемся. Движение
-                # продолжится только при наличии next_dir (тап по новой
-                # клетке или удержание джойстика).
                 if self.p_dir != VEC_ZERO:
                     self.p_dir = VEC_ZERO
                 if self.p_dir == VEC_ZERO and self.next_dir in avail:
@@ -3700,7 +3681,6 @@ class GameScreen(Screen):
                     b.bind(on_release=callback)
                     overlay.add_widget(b)
 
-                # Фиксированные слоты 2x2 (не сдвигаются при отсутствии кнопок)
                 _mk_btn('From scratch', {'center_x': 0.25, 'y': 0.02},
                         lambda x: self.restart_from('fresh'))
                 _mk_btn('Menu', {'center_x': 0.75, 'y': 0.02},
@@ -3813,10 +3793,19 @@ class DoorsApp(App):
         return True
 
     def on_resume(self):
+        # ИСПРАВЛЕНО: убрана опечатка hasattr(screen, 'hasattr').
+        # При возврате из фона принудительно сбрасываем кэш-флаг «стены
+        # уже нарисованы» и вызываем полную перерисовку канваса игры.
+        # Для экранов без game (Menu, Loading) — как раньше.
         try:
             screen = self.root.current_screen
-            if hasattr(screen, 'hasattr') and hasattr(screen, 'game') and hasattr(screen.game, 'trigger_static_redraw'):
-                Clock.schedule_once(lambda dt: screen.game.trigger_static_redraw(), 0.1)
+            if hasattr(screen, 'game') and hasattr(screen.game, 'trigger_static_redraw'):
+                game = screen.game
+                if hasattr(game, '_static_built'):
+                    game._static_built = False
+                if hasattr(game, '_drawn_static_chunk'):
+                    game._drawn_static_chunk = None
+                Clock.schedule_once(lambda dt: game.trigger_static_redraw(), 0.1)
             else:
                 _schedule_canvas_refresh()
         except Exception:
