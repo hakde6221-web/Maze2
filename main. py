@@ -32,7 +32,7 @@ GREEN_BUTTON_COLOR = (0, 1, 0)
 
 MAZE_W, MAZE_H = 20, 20
 NUM_DEAD_ENDS = 100
-NUM_ENEMIES = 20
+NUM_ENEMIES = 40
 
 MAZE_W_10, MAZE_H_10 = 10, 10
 NUM_DEAD_ENDS_10 = 25
@@ -65,11 +65,11 @@ VEC_ZERO = Vector(0, 0)
 SAVE_DIR = None
 SAVE_EXT = ".pkl"
 
-MODE_10, MODE_20, MODE_50, MODE_100 = '10', '20', '50', '100'
+MODE_10, MODE_20, MODE_40 = '10', '20', '40'
 _MAP_FILES = {MODE_10: 'maze_map_10.pkl', MODE_20: 'maze_map_20.pkl',
-              MODE_50: 'maze_map_50.pkl', MODE_100: 'maze_map_100.pkl'}
+              MODE_40: 'maze_map_40.pkl'}
 _SAVE_PREFIXES = {MODE_10: 'save_game_10_', MODE_20: 'save_game_20_',
-                  MODE_50: 'save_game_50_', MODE_100: 'save_game_100_'}
+                  MODE_40: 'save_game_40_'}
 CURRENT_MODE = MODE_20
 
 MAP_VERSION = 12
@@ -241,26 +241,37 @@ def _mask_to_positions(mask):
 
 
 _SYM_MASKS, _ASYM_MASKS = _generate_dot_patterns()
-_ALL_MASKS_SORTED = sorted(_SYM_MASKS + _ASYM_MASKS, key=lambda m: (bin(m).count('1'), m))
-DOT_PATTERNS = [_mask_to_positions(m) for m in _ALL_MASKS_SORTED]
+_BASE_MASKS = list(_SYM_MASKS) + list(_ASYM_MASKS)
+_base_set = set(_BASE_MASKS)
+_base_count = len(_BASE_MASKS)
 
-_all_pairs = [(i, _ALL_MASKS_SORTED[i]) for i in range(len(_ALL_MASKS_SORTED))]
-_all_pairs.sort(key=lambda p: (-bin(p[1]).count('1'), p[0]))
-_ALL_PATTERNS_BY_DOTS_DESC = [i for i, _ in _all_pairs]
+# 60 дополнительных масок: самые разреженные (мало точек) из ещё не занятых
+_candidates = [m for m in range(1, 512) if m not in _base_set]
+_candidates.sort(key=lambda m: (bin(m).count('1'), m))
+_EXTRA_MASKS = _candidates[:60]
 
-_GROUP_SIZE = len(_ALL_PATTERNS_BY_DOTS_DESC) // 5
-PATTERNS_BY_COLOR = [
-    _ALL_PATTERNS_BY_DOTS_DESC[c * _GROUP_SIZE: (c + 1) * _GROUP_SIZE]
-    for c in range(5)
-]
-_extra = len(_ALL_PATTERNS_BY_DOTS_DESC) - 5 * _GROUP_SIZE
-for c in range(_extra):
-    PATTERNS_BY_COLOR[c].append(_ALL_PATTERNS_BY_DOTS_DESC[5 * _GROUP_SIZE + c])
+# Базовый пул: те же 100 масок, что и раньше, порядок: по убыванию точек
+_BASE_SORTED = sorted(_BASE_MASKS, key=lambda m: (-bin(m).count('1'), m))
+# Расширения: по убыванию точек
+_EXTRA_SORTED = sorted(_EXTRA_MASKS, key=lambda m: (-bin(m).count('1'), m))
+# Общий пул: сначала базовые, потом расширения (в сумме 160)
+_ALL_MASKS_ORDERED = _BASE_SORTED + _EXTRA_SORTED
+_full_count = len(_ALL_MASKS_ORDERED)
 
-PATTERNS_10_BY_COLOR = [PATTERNS_BY_COLOR[c][:2] for c in range(5)]
-PATTERNS_20_BY_COLOR = [PATTERNS_BY_COLOR[c][:4] for c in range(5)]
-PATTERNS_50_BY_COLOR = [PATTERNS_BY_COLOR[c][:10] for c in range(5)]
-PATTERNS_100_BY_COLOR = [PATTERNS_BY_COLOR[c][:20] for c in range(5)]
+DOT_PATTERNS = [_mask_to_positions(m) for m in _ALL_MASKS_ORDERED]
+
+# Распределение базового пула по 5 цветам.
+# Интерливинг: список по точкам идёт [red, green, yellow, blue, white, red, green, ...],
+# то есть позиция p в общем списке по точкам соответствует цвету p % 5.
+# Внутри одного цвета порядок в индексе совпадает с порядком в общем списке по точкам.
+_BASE_PATTERNS_BY_COLOR = [list(range(c, _base_count, 5)) for c in range(5)]
+
+# Распределение расширенного пула (40x40) — то же самое, но на 160 масок.
+_FULL_PATTERNS_BY_COLOR = [list(range(c, _full_count, 5)) for c in range(5)]
+
+PATTERNS_10_BY_COLOR = [_BASE_PATTERNS_BY_COLOR[c][:2] for c in range(5)]
+PATTERNS_20_BY_COLOR = [_BASE_PATTERNS_BY_COLOR[c][:8] for c in range(5)]
+PATTERNS_40_BY_COLOR = _FULL_PATTERNS_BY_COLOR
 
 TEXT_CACHE = {}
 
@@ -644,19 +655,19 @@ SND_VICTORY_PATH = SoundGenerator.create_beep(
     [0.20, 0.20, 0.20, 0.30, 0.60, 1.50], "victory")
 
 _ENEMY_DROP_SPECS = [
-    ([440, 330],              [0.1, 0.1], "enemy_drop_0v2"),
-    ([523, 659],              [0.1, 0.1], "enemy_drop_1v2"),
-    ([880, 660],              [0.1, 0.1], "enemy_drop_2v2"),
-    ([392, 466],              [0.1, 0.1], "enemy_drop_3v2"),
-    ([1760, 1319],            [0.1, 0.1], "enemy_drop_4v2"),
+    ([220, 165, 131, 98],        [0.1, 0.1, 0.1, 0.1], "enemy_drop_0v3"),
+    ([261.5, 329.5, 392, 523.5], [0.1, 0.1, 0.1, 0.1], "enemy_drop_1v3"),
+    ([440, 330, 440, 330],       [0.1, 0.1, 0.1, 0.1], "enemy_drop_2v3"),
+    ([196, 233, 196, 233],       [0.1, 0.1, 0.1, 0.1], "enemy_drop_3v3"),
+    ([880, 659.5, 523.5, 392],   [0.1, 0.1, 0.1, 0.1], "enemy_drop_4v3"),
 ]
 
 _ENEMY_PICKUP_SPECS = [
-    ([440, 330, 262, 196],    [0.1, 0.1, 0.1, 0.1], "enemy_pickup_0v2"),
-    ([523, 659, 784, 1047],   [0.1, 0.1, 0.1, 0.1], "enemy_pickup_1v2"),
-    ([880, 660, 880, 660],    [0.1, 0.1, 0.1, 0.1], "enemy_pickup_2v2"),
-    ([392, 466, 392, 466],    [0.1, 0.1, 0.1, 0.1], "enemy_pickup_3v2"),
-    ([1760, 1319, 1047, 784], [0.1, 0.1, 0.1, 0.1], "enemy_pickup_4v2"),
+    ([220, 165],      [0.1, 0.1], "enemy_pickup_0v3"),
+    ([261.5, 329.5],  [0.1, 0.1], "enemy_pickup_1v3"),
+    ([440, 330],      [0.1, 0.1], "enemy_pickup_2v3"),
+    ([196, 233],      [0.1, 0.1], "enemy_pickup_3v3"),
+    ([880, 659.5],    [0.1, 0.1], "enemy_pickup_4v3"),
 ]
 
 SND_ENEMY_DROP_PATHS = [SoundGenerator.create_beep(f, d, n) for f, d, n in _ENEMY_DROP_SPECS]
@@ -757,12 +768,9 @@ class MazeGenerator10(MazeGenerator20):
 
 
 class MazeGeneratorLarge(MazeGeneratorBase):
-    def __init__(self, w=50, h=50):
+    def __init__(self, w=40, h=40):
         super().__init__(w, h)
-        if w == 50:
-            self.target_min, self.target_max = 625, 690
-        else:
-            self.target_min, self.target_max = 2500, 2750
+        self.target_min, self.target_max = 400, 440
         while True:
             self.grid = self._generate_base_grid()
             self.dead_ends = [(x, y) for y in range(self.h) for x in range(self.w)
@@ -798,8 +806,6 @@ def _round_hud_dist(d):
 class GameWorldBase(Widget):
     SAVE_VERSION = 0
     IS_LARGE = False
-    _autosave_every_n = 1
-    _autosave_digit = None
 
     cached_btn_dist = None
     cached_btn_color = None
@@ -974,8 +980,7 @@ class GameWorldBase(Widget):
             return
         cid = en.get('color_id', 0)
         mc = self.color_palette[cid] if (self.color_palette and 0 <= cid < len(self.color_palette)) else (1, 0, 0)
-        cycle_set = getattr(self, 'sleep_cycle_set', None)
-        alpha = 0.4 if (cycle_set is not None and en['idx'] in cycle_set) else 1.0
+        alpha = 1.0
         if not en.get('g_star_triangles'):
             group.clear()
             outer_r = (CELL_SIZE - 4) / 2.0
@@ -1059,6 +1064,7 @@ class GameWorldBase(Widget):
             'body_color_inst': body_inst, 'mark_color_inst': mark_inst,
             'sleep_counter': sleep_counter, '_just_moved': False,
             '_just_woke': False, 'pause_after_door': False,
+            '_just_picked': False,
             'last_drawn_dir': (None, None), 'is_visible': True, 'visible_cells': set(),
         }
         self._update_carrier_visual(en_dict)
@@ -1118,6 +1124,8 @@ class GameWorldBase(Widget):
         slot = getattr(app, 'load_slot', 'last')
         self._loaded_from_prev = False
         self._locked_prev_path = None
+        if slot == 'fresh':
+            return None
         if slot == 'pre_last':
             path = get_second_latest_save_path()
             if path:
@@ -1275,29 +1283,22 @@ class GameWorldBase(Widget):
         if active_enemies is None:
             active_enemies = self.enemies
         occupied = {en['current_cell'] for en in self.enemies}
-        blocked = set()
-        intents = {en['idx']: self._compute_intent(en, occupied, blocked) for en in active_enemies}
-        for _ in range(30):
-            counts = {}
-            for v in intents.values():
-                if v is not None:
-                    counts[v] = counts.get(v, 0) + 1
-            disputed = {cell for cell, cnt in counts.items() if cnt > 1}
-            newly_blocked = disputed - blocked
-            if not newly_blocked:
-                break
-            blocked |= newly_blocked
-            for en in active_enemies:
-                if intents[en['idx']] in newly_blocked:
-                    intents[en['idx']] = self._compute_intent(en, occupied, blocked)
-        counts = {}
-        for v in intents.values():
-            if v is not None:
-                counts[v] = counts.get(v, 0) + 1
+        empty_blocked = frozenset()
+        intents = {en['idx']: self._compute_intent(en, occupied, empty_blocked)
+                   for en in active_enemies}
+
+        claimed = {}
         for en in active_enemies:
             v = intents[en['idx']]
-            if v is not None and counts.get(v, 0) > 1:
-                intents[en['idx']] = None
+            if v is not None:
+                claimed.setdefault(v, []).append(en['idx'])
+
+        for idx_list in claimed.values():
+            if len(idx_list) > 1:
+                idx_list.sort()
+                for loser in idx_list[1:]:
+                    intents[loser] = None
+
         return intents
 
     def get_topological_distances(self, start_grid, targets=None):
@@ -1488,12 +1489,7 @@ class GameWorldBase(Widget):
             snd = self.snd_enemy_pickup[cid]
             if snd and not app.is_muted:
                 snd.play()
-
-    def _get_slept_pct(self):
-        total = len(self.enemies)
-        if total == 0:
-            return 0
-        return int(100 * (total - len(self.sleep_cycle_set)) / total)
+        en['_just_picked'] = True
 
     def save_game_state(self):
         enemies_state = []
@@ -1516,6 +1512,8 @@ class GameWorldBase(Widget):
             'hatch_open': self.hatch_open,
             'ground_buttons': dict(self.ground_buttons),
             'full_sleep_cycles': self.full_sleep_cycles,
+            'autosave_count': self.autosave_count,
+            'autosave_percent': self.autosave_percent,
             'player_grid_x': self.player_grid.x, 'player_grid_y': self.player_grid.y,
             'p_pixel_x': self.p_pixel.x, 'p_pixel_y': self.p_pixel.y,
             'p_dir_x': self.p_dir.x, 'p_dir_y': self.p_dir.y,
@@ -1617,24 +1615,15 @@ class GameWorldBase(Widget):
         group.add(Line(rectangle=(x0, y0, size, size), width=1.2))
         cut = size * 0.22
         group.add(Line(points=[x0 + size - cut, y0 + size, x0 + size, y0 + size - cut], width=2))
-        if digit is not None:
-            label_cy = y0 + size * 0.08 + lh / 2
-            digit_fs = max(1, int(lh * 0.95))
-            tex = get_text_texture(str(digit), digit_fs)
-            group.add(Color(0, 0, 0, 1))
-            group.add(Rectangle(texture=tex,
-                                pos=(cx - tex.size[0] / 2, label_cy - tex.size[1] / 2),
-                                size=tex.size))
 
     def _draw_autosave_counter(self, y_center, x_center=None, group=None):
         if group is None:
             group = self.hud_dynamic_group
         f_size = self.f_size
-        digit = getattr(self, '_autosave_digit', None)
         icon_size = max(14, f_size * 1.4)
         icon_size = int(icon_size * 0.8)
-        cycles_str = str(self.full_sleep_cycles)
-        pct_str = f"{self._get_slept_pct()}%"
+        cycles_str = str(self.autosave_count)
+        pct_str = f"{self.autosave_percent}%"
         cyc_tex = get_text_texture(cycles_str, f_size)
         pct_tex = get_text_texture(pct_str, f_size)
         total_w = cyc_tex.size[0] + 6 + icon_size + 6 + pct_tex.size[0]
@@ -1643,7 +1632,7 @@ class GameWorldBase(Widget):
         base_x = x_center - total_w / 2.0
         self._draw_text(cycles_str, base_x, y_center, f_size, group=group)
         fx = base_x + cyc_tex.size[0] + 6
-        self._draw_floppy(fx + icon_size / 2, y_center, icon_size, digit=digit, group=group)
+        self._draw_floppy(fx + icon_size / 2, y_center, icon_size, digit=None, group=group)
         self._draw_text(pct_str, fx + icon_size + 6, y_center, f_size, group=group)
 
     def _update_hud_fps(self):
@@ -1712,6 +1701,7 @@ class GameWorldBase(Widget):
             if en['_just_moved']:
                 key = (old, en['current_cell']) if old < en['current_cell'] else (en['current_cell'], old)
                 en['pause_after_door'] = (key in self.doors)
+                en['_just_picked'] = False
             else:
                 en['pause_after_door'] = False
 
@@ -1722,7 +1712,6 @@ class GameWorldBase(Widget):
                          if not en.get('pause_after_door', False)]
         intents = self._resolve_enemy_intents(intent_active)
 
-        cycle_completed = False
         if not any_sleeping and self.sleep_cycle_set:
             reverse_order = (self.full_sleep_cycles % 2 == 1)
             ordered = sorted(self.sleep_cycle_set, reverse=reverse_order)
@@ -1741,18 +1730,9 @@ class GameWorldBase(Widget):
                     chosen['pause_after_door'] = False
                     self._update_sleep_visual(chosen)
                     self.sleep_cycle_set.discard(chosen['idx'])
-                    reset_done = False
                     if not self.sleep_cycle_set:
                         self.sleep_cycle_set = set(e['idx'] for e in self.enemies)
                         self.full_sleep_cycles += 1
-                        cycle_completed = True
-                        reset_done = True
-                    if reset_done:
-                        for en2 in self.enemies:
-                            if en2.get('is_carrier', False):
-                                self._update_carrier_star_visual(en2)
-                    elif chosen.get('is_carrier', False):
-                        self._update_carrier_star_visual(chosen)
                     was_sleeping.add(id(chosen))
 
         union_vis = set()
@@ -1791,9 +1771,11 @@ class GameWorldBase(Widget):
         for en in self.enemies:
             if not en.get('is_carrier', False):
                 continue
+            if en.get('_just_picked', False):
+                continue
             if en.get('sleep_counter', 0) > 0:
                 continue
-            if en['idx'] in self.sleep_cycle_set:
+            if not en.get('_just_moved', False):
                 continue
             if en['current_cell'] not in self.dead_ends_set:
                 continue
@@ -1816,7 +1798,10 @@ class GameWorldBase(Widget):
 
         self.enemy_tick_counter += 1
 
-        if cycle_completed and (self.full_sleep_cycles % self._autosave_every_n == 0):
+        self.autosave_percent += 1
+        if self.autosave_percent >= 100:
+            self.autosave_percent = 0
+            self.autosave_count += 1
             self.save_game_state()
             self._flash_checkpoint()
             if self.snd_checkpoint and not app.is_muted:
@@ -1907,16 +1892,19 @@ class GameWorldBase(Widget):
                         return
 
                 avail = self.get_avail(gx, gy)
-                has_door = self._has_adjacent_door(gx, gy)
+                # --- УДЕРЖАНИЕ ДЖОЙСТИКА: пока палец на джойстике, каждый кадр
+                # подставляем текущее направление как next_dir. Это даёт тот же
+                # эффект, что и многократные нажатия, но без «дребезга» пальца.
+                # При отпускании current_joy_dir становится None — эффект
+                # прекращается ровно в момент отпускания.
+                if self.current_joy_dir is not None:
+                    self.next_dir = self.current_joy_dir
+                # --- АВТООСТАНОВКА ПОСЛЕ КАЖДОЙ КЛЕТКИ ---
+                # По прибытии в клетку всегда останавливаемся. Движение
+                # продолжится только при наличии next_dir (тап по новой
+                # клетке или удержание джойстика).
                 if self.p_dir != VEC_ZERO:
-                    if self.next_dir is not None and self.next_dir != self.p_dir:
-                        self.p_dir, self.next_dir = VEC_ZERO, None
-                    elif has_door:
-                        self.p_dir = VEC_ZERO
-                    else:
-                        fps = [d for d in avail if d != -self.p_dir]
-                        self.p_dir = VEC_ZERO if len(avail) > 2 else (
-                            fps[0] if len(avail) == 2 and len(fps) == 1 else VEC_ZERO)
+                    self.p_dir = VEC_ZERO
                 if self.p_dir == VEC_ZERO and self.next_dir in avail:
                     self.p_dir = self.next_dir
                 self.next_dir = None
@@ -2152,6 +2140,8 @@ class GameWorldStatic(GameWorldBase):
         self.collected_count = 0
         self.ground_buttons = {}
         self.full_sleep_cycles = 0
+        self.autosave_count = 0
+        self.autosave_percent = 0
 
         if save_data:
             self.hatch_open = save_data.get('hatch_open', False)
@@ -2159,6 +2149,8 @@ class GameWorldStatic(GameWorldBase):
             self.collected_count = len(self.collected_trophies)
             self.ground_buttons = dict(save_data.get('ground_buttons', {}))
             self.full_sleep_cycles = int(save_data.get('full_sleep_cycles', 0))
+            self.autosave_count = int(save_data.get('autosave_count', 0))
+            self.autosave_percent = int(save_data.get('autosave_percent', 0))
             self.player_grid = Vector(save_data['player_grid_x'], save_data['player_grid_y'])
             self.p_pixel = Vector(save_data['p_pixel_x'], save_data['p_pixel_y'])
             self.p_dir = Vector(save_data['p_dir_x'], save_data['p_dir_y'])
@@ -2186,9 +2178,9 @@ class GameWorldStatic(GameWorldBase):
             for cid in sorted(by_color.keys()):
                 color_pool = pools_by_color[cid] if cid < len(pools_by_color) else pools_by_color[0]
                 for i, (pos, dist) in enumerate(by_color[cid]):
-                    rule = 'right' if i % 2 == 0 else 'left'
-                    is_carrier = (i == 0)
                     pat_idx = color_pool[i % len(color_pool)] if color_pool else 0
+                    rule = 'right' if pat_idx % 2 == 0 else 'left'
+                    is_carrier = (i == 0)
                     prof = {'pattern_idx': pat_idx, 'turn_rule': rule,
                             'speed': 0.5, 'color': WALL_COLOR}
                     self.enemies.append(self._make_enemy_dict(
@@ -2533,7 +2525,7 @@ class GameWorldStatic(GameWorldBase):
 
         self._update_hud_fps()
 
-        dyn_cur = (self.full_sleep_cycles, self._get_slept_pct())
+        dyn_cur = (self.autosave_count, self.autosave_percent)
         if getattr(self, 'hud_dynamic_state', None) != dyn_cur:
             self.hud_dynamic_state = dyn_cur
             self.draw_hud_dynamic()
@@ -2547,8 +2539,6 @@ class GameWorld10(GameWorldStatic):
     WORLD_CX = MAZE_WORLD_CX_10
     MAX_ENEMIES = NUM_ENEMIES_10
     PATTERN_POOL = PATTERNS_10_BY_COLOR
-    _autosave_every_n = 5
-    _autosave_digit = 5
 
 
 class GameWorld20(GameWorldStatic):
@@ -2559,12 +2549,10 @@ class GameWorld20(GameWorldStatic):
     WORLD_CX = MAZE_WORLD_CX
     MAX_ENEMIES = NUM_ENEMIES
     PATTERN_POOL = PATTERNS_20_BY_COLOR
-    _autosave_every_n = 2
-    _autosave_digit = 2
 
 
 class GameWorldLarge(GameWorldBase):
-    SAVE_VERSION = 14
+    SAVE_VERSION = 15
     IS_LARGE = True
 
     def __init__(self, **kwargs):
@@ -2607,20 +2595,12 @@ class GameWorldLarge(GameWorldBase):
 
         self.hud_extra_group = InstructionGroup(); self.canvas.add(self.hud_extra_group)
 
-        if CURRENT_MODE == MODE_100:
-            self._pattern_pool = PATTERNS_100_BY_COLOR
-            self._max_enemies = 100
-            self._dim_mult = 11
-            self._static_delta = 6
-            self._door_dist = 7
-            self._vis_radius = 7
-        else:
-            self._pattern_pool = PATTERNS_50_BY_COLOR
-            self._max_enemies = 50
-            self._dim_mult = 9
-            self._static_delta = 5
-            self._door_dist = 6
-            self._vis_radius = 6
+        self._pattern_pool = PATTERNS_40_BY_COLOR
+        self._max_enemies = 160
+        self._dim_mult = 9
+        self._static_delta = 5
+        self._door_dist = 6
+        self._vis_radius = 6
 
         self.enemies = []
         save_data = self._load_save_data()
@@ -2629,6 +2609,8 @@ class GameWorldLarge(GameWorldBase):
         self.collected_count = 0
         self.ground_buttons = {}
         self.full_sleep_cycles = 0
+        self.autosave_count = 0
+        self.autosave_percent = 0
 
         if save_data:
             self.hatch_open = save_data.get('hatch_open', False)
@@ -2636,6 +2618,8 @@ class GameWorldLarge(GameWorldBase):
             self.collected_count = len(self.collected_trophies)
             self.ground_buttons = dict(save_data.get('ground_buttons', {}))
             self.full_sleep_cycles = int(save_data.get('full_sleep_cycles', 0))
+            self.autosave_count = int(save_data.get('autosave_count', 0))
+            self.autosave_percent = int(save_data.get('autosave_percent', 0))
             self.player_grid = Vector(save_data['player_grid_x'], save_data['player_grid_y'])
             self.p_pixel = Vector(save_data['p_pixel_x'], save_data['p_pixel_y'])
             self.p_dir = Vector(save_data['p_dir_x'], save_data['p_dir_y'])
@@ -2664,9 +2648,9 @@ class GameWorldLarge(GameWorldBase):
                 for i, (pos, dist) in enumerate(by_color[cid]):
                     if slot_idx >= self._max_enemies:
                         break
-                    rule = 'right' if i % 2 == 0 else 'left'
-                    is_carrier = (i == 0)
                     pat_idx = color_pool[i % len(color_pool)] if color_pool else 0
+                    rule = 'right' if pat_idx % 2 == 0 else 'left'
+                    is_carrier = (i == 0)
                     prof = {'pattern_idx': pat_idx, 'turn_rule': rule,
                             'speed': 0.5, 'color': WALL_COLOR}
                     self.enemies.append(self._make_enemy_dict(
@@ -2987,8 +2971,7 @@ class GameWorldLarge(GameWorldBase):
         group.add(Line(circle=(cx, cy, 18 * scale, a_s, a_e), width=2 * scale))
 
         if en.get('is_carrier', False):
-            cycle_set = getattr(self, 'sleep_cycle_set', None)
-            alpha = 0.4 if (cycle_set is not None and en['idx'] in cycle_set) else 1.0
+            alpha = 1.0
             outer_r = ((CELL_SIZE - 4) * scale) / 2.0
             inner_r = outer_r * 0.382
             star_verts = []
@@ -3211,7 +3194,7 @@ class GameWorldLarge(GameWorldBase):
 
         self._update_hud_fps()
 
-        dyn_cur = (self.full_sleep_cycles, self._get_slept_pct())
+        dyn_cur = (self.autosave_count, self.autosave_percent)
         if getattr(self, 'hud_dynamic_state', None) != dyn_cur:
             self.hud_dynamic_state = dyn_cur
             self.draw_hud_dynamic()
@@ -3385,7 +3368,6 @@ class MuteButton(Widget):
 
 
 class PauseButton(Widget):
-    """Круглая кнопка цвета стен с иконкой play (когда пауза) или двух палочек (когда игра идёт)."""
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.bind(pos=self.redraw, size=self.redraw)
@@ -3488,10 +3470,8 @@ class LoadingScreen(Screen):
             gen = MazeGenerator10()
         elif mode == MODE_20:
             gen = MazeGenerator20(MAZE_W, MAZE_H, NUM_DEAD_ENDS)
-        elif mode == MODE_50:
-            gen = MazeGeneratorLarge(50, 50)
-        else:
-            gen = MazeGeneratorLarge(100, 100)
+        else:  # MODE_40
+            gen = MazeGeneratorLarge(40, 40)
         return {
             'version': MAP_VERSION,
             'grid': gen.grid,
@@ -3606,7 +3586,7 @@ class GameScreen(Screen):
             self.game = GameWorld10()
         elif CURRENT_MODE == MODE_20:
             self.game = GameWorld20()
-        else:
+        else:  # MODE_40
             self.game = GameWorldLarge()
         self.f.add_widget(self.game)
 
@@ -3711,28 +3691,27 @@ class GameScreen(Screen):
             self.f.add_widget(overlay)
 
             def _show_lose_btns(dt):
-                btn_last = Button(text='Last', font_size='22sp', size_hint=(0.45, 0.15),
-                                  pos_hint={'center_x': 0.5, 'y': 0.12},
-                                  color=(*TEXT_COLOR, 1))
-                btn_last.bind(on_release=lambda x: self.restart_from('last'))
-                overlay.add_widget(btn_last)
-                if has_any_save():
-                    btn_prev = Button(text='Prev', font_size='20sp', size_hint=(0.45, 0.09),
-                                      pos_hint={'center_x': 0.25, 'y': 0.02},
-                                      color=(*TEXT_COLOR, 1))
-                    btn_prev.bind(on_release=lambda x: self.restart_from('pre_last'))
-                    overlay.add_widget(btn_prev)
-                    btn_menu = Button(text='Menu', font_size='20sp', size_hint=(0.45, 0.09),
-                                      pos_hint={'center_x': 0.75, 'y': 0.02},
-                                      color=(*TEXT_COLOR, 1))
-                    btn_menu.bind(on_release=lambda x: self.go_menu())
-                    overlay.add_widget(btn_menu)
-                else:
-                    btn_menu = Button(text='Menu', font_size='20sp', size_hint=(0.45, 0.09),
-                                      pos_hint={'center_x': 0.5, 'y': 0.02},
-                                      color=(*TEXT_COLOR, 1))
-                    btn_menu.bind(on_release=lambda x: self.go_menu())
-                    overlay.add_widget(btn_menu)
+                saves_count = len(get_save_files())
+
+                def _mk_btn(text, pos_hint, callback):
+                    b = Button(text=text, font_size='20sp',
+                               size_hint=(0.48, 0.14),
+                               pos_hint=pos_hint, color=(*TEXT_COLOR, 1))
+                    b.bind(on_release=callback)
+                    overlay.add_widget(b)
+
+                # Фиксированные слоты 2x2 (не сдвигаются при отсутствии кнопок)
+                _mk_btn('From scratch', {'center_x': 0.25, 'y': 0.02},
+                        lambda x: self.restart_from('fresh'))
+                _mk_btn('Menu', {'center_x': 0.75, 'y': 0.02},
+                        lambda x: self.go_menu())
+                if saves_count >= 1:
+                    _mk_btn('Last', {'center_x': 0.25, 'y': 0.16},
+                            lambda x: self.restart_from('last'))
+                if saves_count >= 2:
+                    _mk_btn('Prev', {'center_x': 0.75, 'y': 0.16},
+                            lambda x: self.restart_from('pre_last'))
+
                 _schedule_canvas_refresh()
 
             Clock.schedule_once(_show_lose_btns, 2.0)
@@ -3766,10 +3745,9 @@ class MenuScreen(Screen):
         self._icon = PlayerIcon(size_hint=(None, None))
         l.add_widget(self._icon)
         for y, text, subtext, mode in [
-                (0.68, '100x100', '100 enemies', MODE_100),
-                (0.52, '50x50', '50 enemies', MODE_50),
-                (0.36, '20x20', '20 enemies', MODE_20),
-                (0.20, '10x10', '10 enemies (very hard)', MODE_10)]:
+                (0.55, '40x40', '160 enemies', MODE_40),
+                (0.38, '20x20', '40 enemies', MODE_20),
+                (0.21, '10x10', '10 enemies', MODE_10)]:
             btn = MenuModeButton(subtext=subtext, text=text, font_size='26sp', bold=True,
                                  color=(*TEXT_COLOR, 1),
                                  size_hint=(.6, .11), pos_hint={'center_x': .5, 'center_y': y})
@@ -3837,7 +3815,7 @@ class DoorsApp(App):
     def on_resume(self):
         try:
             screen = self.root.current_screen
-            if hasattr(screen, 'game') and hasattr(screen.game, 'trigger_static_redraw'):
+            if hasattr(screen, 'hasattr') and hasattr(screen, 'game') and hasattr(screen.game, 'trigger_static_redraw'):
                 Clock.schedule_once(lambda dt: screen.game.trigger_static_redraw(), 0.1)
             else:
                 _schedule_canvas_refresh()
