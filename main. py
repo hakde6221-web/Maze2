@@ -2596,7 +2596,7 @@ class GameWorldLarge(GameWorldBase):
         self.hud_extra_group = InstructionGroup(); self.canvas.add(self.hud_extra_group)
 
         self._pattern_pool = PATTERNS_40_BY_COLOR
-        self._max_enemies = 160
+        self._max_enemies = 80
         self._dim_mult = 9
         self._static_delta = 5
         self._door_dist = 6
@@ -3745,7 +3745,7 @@ class MenuScreen(Screen):
         self._icon = PlayerIcon(size_hint=(None, None))
         l.add_widget(self._icon)
         for y, text, subtext, mode in [
-                (0.55, '40x40', '160 enemies', MODE_40),
+                (0.55, '40x40', '80 enemies', MODE_40),
                 (0.38, '20x20', '40 enemies', MODE_20),
                 (0.21, '10x10', '10 enemies', MODE_10)]:
             btn = MenuModeButton(subtext=subtext, text=text, font_size='26sp', bold=True,
