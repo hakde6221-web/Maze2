@@ -257,7 +257,6 @@ def _mask_to_positions(mask):
 _SYM_MASKS, _ASYM_MASKS = _generate_dot_patterns()
 _BASE_MASKS = list(_SYM_MASKS) + list(_ASYM_MASKS)
 _base_set = set(_BASE_MASKS)
-_base_count = len(_BASE_MASKS)
 
 _candidates = [m for m in range(1, 512) if m not in _base_set]
 _candidates.sort(key=lambda m: (bin(m).count('1'), m))
@@ -265,17 +264,21 @@ _EXTRA_MASKS = _candidates[:60]
 
 _BASE_SORTED = sorted(_BASE_MASKS, key=lambda m: (-bin(m).count('1'), m))
 _EXTRA_SORTED = sorted(_EXTRA_MASKS, key=lambda m: (-bin(m).count('1'), m))
-_ALL_MASKS_ORDERED = _BASE_SORTED + _EXTRA_SORTED
+# Оставляем только первые 80 индексов — всё, что дальше, удалено.
+_ALL_MASKS_ORDERED = (_BASE_SORTED + _EXTRA_SORTED)[:80]
 _full_count = len(_ALL_MASKS_ORDERED)
 
 DOT_PATTERNS = [_mask_to_positions(m) for m in _ALL_MASKS_ORDERED]
 
-_BASE_PATTERNS_BY_COLOR = [list(range(c, _base_count, 5)) for c in range(5)]
+# 40x40 — все индексы 0..79.
+# Остальные режимы — только индексы 40..79.
 _FULL_PATTERNS_BY_COLOR = [list(range(c, _full_count, 5)) for c in range(5)]
+_HIGH_PATTERNS_BY_COLOR = [[p for p in range(c, _full_count, 5) if p >= 40]
+                           for c in range(5)]
 
-PATTERNS_10_BY_COLOR = [_BASE_PATTERNS_BY_COLOR[c][:2] for c in range(5)]
-PATTERNS_15_BY_COLOR = [_BASE_PATTERNS_BY_COLOR[c][:4] for c in range(5)]
-PATTERNS_20_BY_COLOR = [_BASE_PATTERNS_BY_COLOR[c][:8] for c in range(5)]
+PATTERNS_10_BY_COLOR = [_HIGH_PATTERNS_BY_COLOR[c][:2] for c in range(5)]
+PATTERNS_15_BY_COLOR = [_HIGH_PATTERNS_BY_COLOR[c][:4] for c in range(5)]
+PATTERNS_20_BY_COLOR = [_HIGH_PATTERNS_BY_COLOR[c][:8] for c in range(5)]
 PATTERNS_40_BY_COLOR = _FULL_PATTERNS_BY_COLOR
 
 TEXT_CACHE = {}
