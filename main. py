@@ -89,11 +89,6 @@ TEXT_COLOR = WALL_COLOR
 
 PAUSE_COLOR = (0.5, 0.8, 1.0)
 
-# Максимум подшагов игрока за кадр. 15 * (1/60) = 0.25 с — ровно
-# потолок буфера time_accumulator (min(acc+dt, 0.25)). Значит остаток
-# времени больше не выбрасывается, и скорость игрока в реальном времени
-# не зависит от FPS. При FPS >= 20 реально выполняется <= 3 подшага,
-# поэтому поведение и нагрузка идентичны прежним (лимит 3).
 _MAX_SUBSTEPS = 15
 
 
@@ -264,14 +259,11 @@ _EXTRA_MASKS = _candidates[:60]
 
 _BASE_SORTED = sorted(_BASE_MASKS, key=lambda m: (-bin(m).count('1'), m))
 _EXTRA_SORTED = sorted(_EXTRA_MASKS, key=lambda m: (-bin(m).count('1'), m))
-# Оставляем только первые 80 индексов — всё, что дальше, удалено.
 _ALL_MASKS_ORDERED = (_BASE_SORTED + _EXTRA_SORTED)[:80]
 _full_count = len(_ALL_MASKS_ORDERED)
 
 DOT_PATTERNS = [_mask_to_positions(m) for m in _ALL_MASKS_ORDERED]
 
-# 40x40 — все индексы 0..79.
-# Остальные режимы — только индексы 40..79.
 _FULL_PATTERNS_BY_COLOR = [list(range(c, _full_count, 5)) for c in range(5)]
 _HIGH_PATTERNS_BY_COLOR = [[p for p in range(c, _full_count, 5) if p >= 40]
                            for c in range(5)]
@@ -1161,7 +1153,6 @@ class GameWorldBase(Widget):
         return None
 
     def _get_los_blockers(self):
-        # Клетка, на которой сейчас стоит игрок, не блокирует обзор других врагов.
         p_cell = (int(self.player_grid.x), int(self.player_grid.y))
         return {en['current_cell'] for en in self.enemies
                 if en['current_cell'] != p_cell}
@@ -1370,29 +1361,24 @@ class GameWorldBase(Widget):
             self.cached_btn_color = min_color
 
     def _get_compass_target(self):
+        # Компас (только для режима 40x40) указывает только на люк (если открыт)
+        # либо на оставленную звезду. Враги-носители игнорируются.
+        # При равной дистанции до нескольких звёзд выбирается звезда с меньшим
+        # color_id (красная -> зелёная -> жёлтая -> голубая -> белая).
         if self.hatch_open:
             return self.hatch_pos
         if self.ground_buttons:
-            min_d, target, tied = 9999, None, False
-            for pos in self.ground_buttons:
+            best_pos = None
+            best_d = 9999
+            best_cid = 9999
+            for pos, cid in self.ground_buttons.items():
                 d = self.player_dists.get(pos, 9999)
-                if d < min_d:
-                    min_d, target, tied = d, pos, False
-                elif d == min_d:
-                    tied = True
-            if not tied and target is not None:
-                return target
-        min_d, target, tied = 9999, None, False
-        for en in self.enemies:
-            if not en.get('is_carrier', False):
-                continue
-            d = self.player_dists.get(en['current_cell'], 9999)
-            if d < min_d:
-                min_d, target, tied = d, en['current_cell'], False
-            elif d == min_d:
-                tied = True
-        if not tied and target is not None:
-            return target
+                if d < best_d or (d == best_d and cid < best_cid):
+                    best_d = d
+                    best_cid = cid
+                    best_pos = pos
+            if best_pos is not None and best_d < 9999:
+                return best_pos
         return None
 
     def _update_compass(self):
@@ -1836,11 +1822,6 @@ class GameWorldBase(Widget):
         self.time_accumulator = min(self.time_accumulator + dt, 0.25)
         sub_steps, state_dirty = 0, False
 
-        # Лимит подшагов = 15 (ровно потолок буфера 0.25 / (1/60)).
-        # При FPS >= 20 реально выполняется <= 3 подшага — поведение
-        # и нагрузка идентичны прежним. При более низком FPS игрок
-        # больше не теряет накопленное время и не замедляется
-        # относительно врагов.
         while self.time_accumulator >= self.dt_step and sub_steps < _MAX_SUBSTEPS:
             self.time_accumulator -= self.dt_step
             self.logic_steps += 1
@@ -3107,7 +3088,7 @@ class GameWorldLarge(GameWorldBase):
             counter_y = sh - 25 - row_h * 1.1 * 3 - trophy_cell * board_scale - row_h * 0.7
             self._draw_autosave_counter(counter_y, x_center=cx, group=self.hud_dynamic_group)
 
-    def draw_hud_extra(self, btn_dist, btn_color, show_hatch, carrier_idx, min_d, target_en):
+    def draw_hud_extra(self, btn_dist, btn_color, show_hatch, min_d, target_en):
         self.hud_extra_group.clear()
         sw, sh = self.width, self.height
         is_landscape = (sw > sh)
@@ -3134,10 +3115,6 @@ class GameWorldLarge(GameWorldBase):
                 _draw_star(self.hud_extra_group, cx_t + big_diam / 2, row3_cy, big_diam, rgb)
             elif show_hatch:
                 self._draw_hatch_icon(cx_t + big_diam / 2, row3_cy, big_diam, group=self.hud_extra_group)
-            elif carrier_idx is not None:
-                carrier = next((e for e in self.enemies if e['idx'] == carrier_idx), None)
-                if carrier:
-                    self._draw_hud_enemy(carrier, cx_t + big_diam / 2, row3_cy, scale=sc, group=self.hud_extra_group)
             cx_t += big_diam + 6
             val_str = f"{btn_dist}" if btn_dist is not None else "-"
             self._draw_text(val_str, cx_t, row3_cy, f_size, group=self.hud_extra_group)
@@ -3185,10 +3162,6 @@ class GameWorldLarge(GameWorldBase):
                 _draw_star(self.hud_extra_group, icon_cx, row_y, big_diam, rgb)
             elif show_hatch:
                 self._draw_hatch_icon(icon_cx, row_y, big_diam, group=self.hud_extra_group)
-            elif carrier_idx is not None:
-                carrier = next((e for e in self.enemies if e['idx'] == carrier_idx), None)
-                if carrier:
-                    self._draw_hud_enemy(carrier, icon_cx, row_y, scale=sc, group=self.hud_extra_group)
 
             val_str = f"{btn_dist}" if btn_dist is not None else "-"
             tex_v = get_text_texture(val_str, f_size)
@@ -3224,6 +3197,8 @@ class GameWorldLarge(GameWorldBase):
             self.hud_dynamic_state = dyn_cur
             self.draw_hud_dynamic()
 
+        # Второй счётчик (ближайший враг): при ничьей берём врага
+        # с минимальным idx — счётчик показывает и дистанцию, и иконку.
         min_d, min_enemies = 9999, []
         for en in self.enemies:
             d = self.player_dists.get(en['current_cell'], 9999)
@@ -3231,50 +3206,40 @@ class GameWorldLarge(GameWorldBase):
                 min_d, min_enemies = d, [en]
             elif d == min_d:
                 min_enemies.append(en)
-        target_en = min_enemies[0] if len(min_enemies) == 1 else None
+        target_en = None
+        if min_enemies:
+            target_en = min(min_enemies, key=lambda e: e['idx'])
 
+        # Первый счётчик (цель компаса): люк или звезда. При ничьей
+        # между звёздами берём звезду с минимальным color_id
+        # (красная -> зелёная -> жёлтая -> голубая -> белая).
         btn_dist = None
         btn_color = None
         show_hatch = False
-        carrier_idx = None
         if self.hatch_open:
             d = self.player_dists.get(self.hatch_pos, 9999)
             if d < 9999:
                 btn_dist = d
             show_hatch = True
         elif self.ground_buttons:
-            min_bd, min_bc, tied = 9999, None, False
+            best_d = 9999
+            best_cid = None
             for pos, cid in self.ground_buttons.items():
                 d = self.player_dists.get(pos, 9999)
-                if d < min_bd:
-                    min_bd, min_bc, tied = d, cid, False
-                elif d == min_bd:
-                    tied = True
-            if min_bd < 9999 and not tied:
-                btn_dist = min_bd
-                btn_color = min_bc
-        else:
-            min_cd, min_ces, tied = 9999, [], False
-            for en in self.enemies:
-                if not en.get('is_carrier', False):
-                    continue
-                d = self.player_dists.get(en['current_cell'], 9999)
-                if d < min_cd:
-                    min_cd, min_ces, tied = d, [en], False
-                elif d == min_cd:
-                    tied = True
-            if min_cd < 9999:
-                btn_dist = min_cd
-                if not tied and min_ces:
-                    carrier_idx = min_ces[0]['idx']
+                if d < best_d or (d == best_d and (best_cid is None or cid < best_cid)):
+                    best_d = d
+                    best_cid = cid
+            if best_d < 9999:
+                btn_dist = best_d
+                btn_color = best_cid
 
         r_btn = _round_hud_dist(btn_dist)
         r_min = _round_hud_dist(min_d)
-        extra_cur = (r_btn, btn_color, show_hatch, carrier_idx, r_min,
+        extra_cur = (r_btn, btn_color, show_hatch, r_min,
                      target_en['idx'] if target_en else None)
         if getattr(self, 'hud_extra_state', None) != extra_cur:
             self.hud_extra_state = extra_cur
-            self.draw_hud_extra(r_btn, btn_color, show_hatch, carrier_idx, r_min, target_en)
+            self.draw_hud_extra(r_btn, btn_color, show_hatch, r_min, target_en)
 
 
 class MazeJoystick(Widget):
@@ -3833,16 +3798,12 @@ class DoorsApp(App):
         Clock.schedule_once(_force_canvas_refresh, 3.0)
 
     def on_pause(self):
-        # Запоминаем, была ли пауза поставлена игроком вручную,
-        # чтобы не «съесть» её при автоматической паузе по сворачиванию.
         self._was_manually_paused = bool(getattr(self, 'is_paused', False))
         self.is_paused = True
         return True
 
     def on_resume(self):
         def _do_resume(dt):
-            # Автоматическую паузу (из on_pause) снимаем сами;
-            # ручную паузу игрока оставляем.
             if not getattr(self, '_was_manually_paused', False):
                 self.is_paused = False
 
@@ -3854,9 +3815,6 @@ class DoorsApp(App):
 
             if hasattr(screen, 'game'):
                 game = screen.game
-                # Сбрасываем флаги-«стражи» полной перерисовки, чтобы
-                # trigger_static_redraw реально перестроил канвас после
-                # восстановления GL-контекста (как при resize).
                 if hasattr(game, '_static_built'):
                     game._static_built = False
                 if hasattr(game, '_drawn_static_chunk'):
@@ -3870,7 +3828,6 @@ class DoorsApp(App):
             else:
                 _schedule_canvas_refresh()
 
-            # Обновляем отрисовку кнопок под актуальное состояние паузы.
             for attr in ('pause_btn', 'mute_btn', 'joystick'):
                 btn = getattr(screen, attr, None)
                 if btn is not None and hasattr(btn, 'redraw'):
@@ -3879,8 +3836,6 @@ class DoorsApp(App):
                     except Exception:
                         pass
 
-        # Небольшая задержка, чтобы Android успел восстановить SDL/GL-контекст
-        # перед тем, как мы протолкнём тяжёлую перерисовку.
         Clock.schedule_once(_do_resume, 0.25)
 
 
