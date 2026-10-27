@@ -82,6 +82,13 @@ TEXT_COLOR = WALL_COLOR
 
 PAUSE_COLOR = (0.5, 0.8, 1.0)
 
+# Максимум подшагов игрока за кадр. 15 * (1/60) = 0.25 с — ровно
+# потолок буфера time_accumulator (min(acc+dt, 0.25)). Значит остаток
+# времени больше не выбрасывается, и скорость игрока в реальном времени
+# не зависит от FPS. При FPS >= 20 реально выполняется <= 3 подшага,
+# поэтому поведение и нагрузка идентичны прежним (лимит 3).
+_MAX_SUBSTEPS = 15
+
 
 def _compute_hud_dims(sw, has_autosave_digit=False):
     f_size = max(14, int(sw / 30))
@@ -1813,7 +1820,12 @@ class GameWorldBase(Widget):
         self.time_accumulator = min(self.time_accumulator + dt, 0.25)
         sub_steps, state_dirty = 0, False
 
-        while self.time_accumulator >= self.dt_step and sub_steps < 3:
+        # Лимит подшагов = 15 (ровно потолок буфера 0.25 / (1/60)).
+        # При FPS >= 20 реально выполняется <= 3 подшага — поведение
+        # и нагрузка идентичны прежним. При более низком FPS игрок
+        # больше не теряет накопленное время и не замедляется
+        # относительно врагов.
+        while self.time_accumulator >= self.dt_step and sub_steps < _MAX_SUBSTEPS:
             self.time_accumulator -= self.dt_step
             self.logic_steps += 1
             sub_steps += 1
@@ -1929,7 +1941,7 @@ class GameWorldBase(Widget):
                 self._update_compass()
                 state_dirty = True
 
-        if sub_steps >= 3:
+        if sub_steps >= _MAX_SUBSTEPS:
             self.time_accumulator = 0.0
         if not self.active: return
 
