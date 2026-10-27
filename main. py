@@ -1137,11 +1137,17 @@ class GameWorldBase(Widget):
             pass
         return None
 
+    def _get_los_blockers(self):
+        # Клетка, на которой сейчас стоит игрок, не блокирует обзор других врагов.
+        p_cell = (int(self.player_grid.x), int(self.player_grid.y))
+        return {en['current_cell'] for en in self.enemies
+                if en['current_cell'] != p_cell}
+
     def _restore_union_visible_cells(self):
         if not self.enemies:
             self.union_visible_cells = set()
             return
-        enemy_positions = {en['current_cell'] for en in self.enemies}
+        enemy_positions = self._get_los_blockers()
         union_vis = set()
         for en in self.enemies:
             en['visible_cells'] = self.get_enemy_los(en, enemy_positions)
@@ -1695,7 +1701,7 @@ class GameWorldBase(Widget):
             else:
                 en['pause_after_door'] = False
 
-        enemy_positions = {en['current_cell'] for en in self.enemies}
+        enemy_positions = self._get_los_blockers()
 
         pre_sleep_active = [en for en in self.enemies if id(en) not in was_sleeping]
         intent_active = [en for en in pre_sleep_active
@@ -3764,6 +3770,7 @@ class DoorsApp(App):
     is_paused = False
     load_slot = 'last'
     pending_new_level = False
+    _was_manually_paused = False
 
     def build(self):
         global SAVE_DIR
@@ -3783,33 +3790,55 @@ class DoorsApp(App):
         Clock.schedule_once(_force_canvas_refresh, 3.0)
 
     def on_pause(self):
+        # Запоминаем, была ли пауза поставлена игроком вручную,
+        # чтобы не «съесть» её при автоматической паузе по сворачиванию.
+        self._was_manually_paused = bool(getattr(self, 'is_paused', False))
         self.is_paused = True
-        try:
-            screen = self.root.current_screen
-            if hasattr(screen, 'pause_btn'):
-                screen.pause_btn.redraw()
-        except Exception:
-            pass
         return True
 
     def on_resume(self):
-        # ИСПРАВЛЕНО: убрана опечатка hasattr(screen, 'hasattr').
-        # При возврате из фона принудительно сбрасываем кэш-флаг «стены
-        # уже нарисованы» и вызываем полную перерисовку канваса игры.
-        # Для экранов без game (Menu, Loading) — как раньше.
-        try:
-            screen = self.root.current_screen
-            if hasattr(screen, 'game') and hasattr(screen.game, 'trigger_static_redraw'):
+        def _do_resume(dt):
+            # Автоматическую паузу (из on_pause) снимаем сами;
+            # ручную паузу игрока оставляем.
+            if not getattr(self, '_was_manually_paused', False):
+                self.is_paused = False
+
+            try:
+                screen = self.root.current_screen
+            except Exception:
+                _schedule_canvas_refresh()
+                return
+
+            if hasattr(screen, 'game'):
                 game = screen.game
+                # Сбрасываем флаги-«стражи» полной перерисовки, чтобы
+                # trigger_static_redraw реально перестроил канвас после
+                # восстановления GL-контекста (как при resize).
                 if hasattr(game, '_static_built'):
                     game._static_built = False
                 if hasattr(game, '_drawn_static_chunk'):
                     game._drawn_static_chunk = None
-                Clock.schedule_once(lambda dt: game.trigger_static_redraw(), 0.1)
+                if hasattr(game, 'last_drawn_chunk'):
+                    game.last_drawn_chunk = None
+                try:
+                    game.trigger_static_redraw()
+                except Exception:
+                    _schedule_canvas_refresh()
             else:
                 _schedule_canvas_refresh()
-        except Exception:
-            _schedule_canvas_refresh()
+
+            # Обновляем отрисовку кнопок под актуальное состояние паузы.
+            for attr in ('pause_btn', 'mute_btn', 'joystick'):
+                btn = getattr(screen, attr, None)
+                if btn is not None and hasattr(btn, 'redraw'):
+                    try:
+                        btn.redraw()
+                    except Exception:
+                        pass
+
+        # Небольшая задержка, чтобы Android успел восстановить SDL/GL-контекст
+        # перед тем, как мы протолкнём тяжёлую перерисовку.
+        Clock.schedule_once(_do_resume, 0.25)
 
 
 if __name__ == '__main__':
