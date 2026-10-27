@@ -38,6 +38,10 @@ MAZE_W_10, MAZE_H_10 = 10, 10
 NUM_DEAD_ENDS_10 = 25
 NUM_ENEMIES_10 = 10
 
+MAZE_W_15, MAZE_H_15 = 15, 15
+NUM_DEAD_ENDS_15 = 55
+NUM_ENEMIES_15 = 20
+
 MAZE_WORLD_DIM = MAZE_W * TOTAL_STEP + WALL_THICK
 MAZE_WORLD_MIN = -WALL_THICK
 MAZE_WORLD_MAX = MAZE_W * TOTAL_STEP
@@ -45,6 +49,9 @@ MAZE_WORLD_CX = (MAZE_WORLD_MIN + MAZE_WORLD_MAX) / 2.0
 
 MAZE_WORLD_DIM_10 = MAZE_W_10 * TOTAL_STEP + WALL_THICK
 MAZE_WORLD_CX_10 = (-WALL_THICK + MAZE_W_10 * TOTAL_STEP) / 2.0
+
+MAZE_WORLD_DIM_15 = MAZE_W_15 * TOTAL_STEP + WALL_THICK
+MAZE_WORLD_CX_15 = (-WALL_THICK + MAZE_W_15 * TOTAL_STEP) / 2.0
 
 MIN_JOY_SIZE = 80
 BTN_R = 12
@@ -65,11 +72,11 @@ VEC_ZERO = Vector(0, 0)
 SAVE_DIR = None
 SAVE_EXT = ".pkl"
 
-MODE_10, MODE_20, MODE_40 = '10', '20', '40'
-_MAP_FILES = {MODE_10: 'maze_map_10.pkl', MODE_20: 'maze_map_20.pkl',
-              MODE_40: 'maze_map_40.pkl'}
-_SAVE_PREFIXES = {MODE_10: 'save_game_10_', MODE_20: 'save_game_20_',
-                  MODE_40: 'save_game_40_'}
+MODE_10, MODE_15, MODE_20, MODE_40 = '10', '15', '20', '40'
+_MAP_FILES = {MODE_10: 'maze_map_10.pkl', MODE_15: 'maze_map_15.pkl',
+              MODE_20: 'maze_map_20.pkl', MODE_40: 'maze_map_40.pkl'}
+_SAVE_PREFIXES = {MODE_10: 'save_game_10_', MODE_15: 'save_game_15_',
+                  MODE_20: 'save_game_20_', MODE_40: 'save_game_40_'}
 CURRENT_MODE = MODE_20
 
 MAP_VERSION = 12
@@ -267,6 +274,7 @@ _BASE_PATTERNS_BY_COLOR = [list(range(c, _base_count, 5)) for c in range(5)]
 _FULL_PATTERNS_BY_COLOR = [list(range(c, _full_count, 5)) for c in range(5)]
 
 PATTERNS_10_BY_COLOR = [_BASE_PATTERNS_BY_COLOR[c][:2] for c in range(5)]
+PATTERNS_15_BY_COLOR = [_BASE_PATTERNS_BY_COLOR[c][:4] for c in range(5)]
 PATTERNS_20_BY_COLOR = [_BASE_PATTERNS_BY_COLOR[c][:8] for c in range(5)]
 PATTERNS_40_BY_COLOR = _FULL_PATTERNS_BY_COLOR
 
@@ -761,6 +769,11 @@ class MazeGenerator20(MazeGeneratorBase):
 
 class MazeGenerator10(MazeGenerator20):
     def __init__(self, w=MAZE_W_10, h=MAZE_H_10, target_de=NUM_DEAD_ENDS_10):
+        super().__init__(w, h, target_de)
+
+
+class MazeGenerator15(MazeGenerator20):
+    def __init__(self, w=MAZE_W_15, h=MAZE_H_15, target_de=NUM_DEAD_ENDS_15):
         super().__init__(w, h, target_de)
 
 
@@ -2540,6 +2553,16 @@ class GameWorld10(GameWorldStatic):
     PATTERN_POOL = PATTERNS_10_BY_COLOR
 
 
+class GameWorld15(GameWorldStatic):
+    SAVE_VERSION = 4
+    GRID_W = MAZE_W_15
+    GRID_H = MAZE_H_15
+    WORLD_DIM = MAZE_WORLD_DIM_15
+    WORLD_CX = MAZE_WORLD_CX_15
+    MAX_ENEMIES = NUM_ENEMIES_15
+    PATTERN_POOL = PATTERNS_15_BY_COLOR
+
+
 class GameWorld20(GameWorldStatic):
     SAVE_VERSION = 16
     GRID_W = MAZE_W
@@ -3467,6 +3490,8 @@ class LoadingScreen(Screen):
     def _generate_grid(self, mode):
         if mode == MODE_10:
             gen = MazeGenerator10()
+        elif mode == MODE_15:
+            gen = MazeGenerator15()
         elif mode == MODE_20:
             gen = MazeGenerator20(MAZE_W, MAZE_H, NUM_DEAD_ENDS)
         else:  # MODE_40
@@ -3583,6 +3608,8 @@ class GameScreen(Screen):
         self.f = FloatLayout()
         if CURRENT_MODE == MODE_10:
             self.game = GameWorld10()
+        elif CURRENT_MODE == MODE_15:
+            self.game = GameWorld15()
         elif CURRENT_MODE == MODE_20:
             self.game = GameWorld20()
         else:  # MODE_40
@@ -3743,9 +3770,10 @@ class MenuScreen(Screen):
         self._icon = PlayerIcon(size_hint=(None, None))
         l.add_widget(self._icon)
         for y, text, subtext, mode in [
-                (0.55, '40x40', '80 enemies', MODE_40),
-                (0.38, '20x20', '40 enemies', MODE_20),
-                (0.21, '10x10', '10 enemies', MODE_10)]:
+                (0.62, '40x40', '80 enemies', MODE_40),
+                (0.47, '20x20', '40 enemies', MODE_20),
+                (0.32, '15x15', '20 enemies', MODE_15),
+                (0.17, '10x10', '10 enemies', MODE_10)]:
             btn = MenuModeButton(subtext=subtext, text=text, font_size='26sp', bold=True,
                                  color=(*TEXT_COLOR, 1),
                                  size_hint=(.6, .11), pos_hint={'center_x': .5, 'center_y': y})
