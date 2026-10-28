@@ -893,8 +893,6 @@ class GameWorldBase(Widget):
 
     def _create_enemy_group(self, pattern_idx, body_color, mark_color):
         egroup = InstructionGroup()
-        # Луч врага (рисуется ПЕРЕД телом в мировых координатах — под своим
-        # врагом, но над ранее отрисованными врагами).
         beam_group = InstructionGroup()
         egroup.add(beam_group)
         egroup.add(PushMatrix())
@@ -953,8 +951,6 @@ class GameWorldBase(Widget):
         elif dx == 0 and dy == -1:  fa = 180
         elif dx == -1 and dy == 0:  fa = 270
         else:                       fa = 0
-        # Метка удлинена на ~40% по сравнению с прежними значениями (17.5 / 50.0).
-        # Ширина линии (width=2) и радиус (18) не изменены.
         if en['turn_rule'] == 'right':
             a_s, a_e = fa - 24.5, fa + 70.0
         else:
@@ -1091,13 +1087,8 @@ class GameWorldBase(Widget):
         self.matrix_group = InstructionGroup(); self.canvas.add(self.matrix_group)
         self.static_group = InstructionGroup(); self.canvas.add(self.static_group)
         self.interactive_group = InstructionGroup(); self.canvas.add(self.interactive_group)
-        # dynamic_group — только игрок (луч зрения его перекрывает).
         self.dynamic_group = InstructionGroup(); self.canvas.add(self.dynamic_group)
-        # los_group — треугольники зрения (над игроком и над наземными звёздами).
-        # Лучи врагов теперь рисуются в их собственных beam_group внутри enemy_group,
-        # а не здесь. los_group остаётся пустым для совместимости порядка.
         self.los_group = InstructionGroup(); self.canvas.add(self.los_group)
-        # enemy_group — враги (поверх луча зрения).
         self.enemy_group = InstructionGroup(); self.canvas.add(self.enemy_group)
         self.doors_group = InstructionGroup(); self.canvas.add(self.doors_group)
         self.canvas.add(PopMatrix())
@@ -1469,8 +1460,6 @@ class GameWorldBase(Widget):
             return
         if self.collected_count >= BUTTONS_TO_OPEN:
             self.hatch_open = True
-            if self.snd_hatch and not app.is_muted:
-                self.snd_hatch.play()
 
     def _drop_button(self, en):
         if not en.get('is_carrier', False):
@@ -1991,8 +1980,6 @@ class GameWorldBase(Widget):
     def _draw_los_beams(self):
         if not hasattr(self, 'los_group'):
             return
-        # los_group остаётся пустым: лучи теперь живут в beam_group каждого врага,
-        # чтобы порядок отрисовки был beam_N, body_N (враг над своим лучом).
         self.los_group.clear()
         for en in self.enemies:
             bg = en.get('g_beam_group')
@@ -2013,7 +2000,6 @@ class GameWorldBase(Widget):
                 continue
             ccx, ccy = en['current_cell']
             ncx, ncy = en['next_cell']
-            # Луч начинается из центра тела врага.
             ex = (ccx * TOTAL_STEP + (ncx - ccx) * TOTAL_STEP * progress
                   + CELL_SIZE / 2)
             ey = (ccy * TOTAL_STEP + (ncy - ccy) * TOTAL_STEP * progress
@@ -2032,7 +2018,6 @@ class GameWorldBase(Widget):
             fw = CELL_SIZE * 0.42
             bg = en.get('g_beam_group')
             if bg is not None:
-                # alpha = 0.25 (было 0.5).
                 bg.add(Color(col[0], col[1], col[2], 0.25))
                 bg.add(Triangle(points=[
                     ex, ey,
@@ -3032,7 +3017,6 @@ class GameWorldLarge(GameWorldBase):
         elif dx == 0 and dy == -1:  fa = 180
         elif dx == -1 and dy == 0:  fa = 270
         else:                       fa = 180
-        # Синхронно с игровой отрисовкой: метка удлинена на ~40%.
         if en['turn_rule'] == 'right':
             a_s, a_e = fa - 24.5, fa + 70.0
         else:
@@ -3522,7 +3506,7 @@ class LoadingScreen(Screen):
             gen = MazeGenerator15()
         elif mode == MODE_20:
             gen = MazeGenerator20(MAZE_W, MAZE_H, NUM_DEAD_ENDS)
-        else:  # MODE_40
+        else:
             gen = MazeGeneratorLarge(40, 40)
         return {
             'version': MAP_VERSION,
@@ -3640,7 +3624,7 @@ class GameScreen(Screen):
             self.game = GameWorld15()
         elif CURRENT_MODE == MODE_20:
             self.game = GameWorld20()
-        else:  # MODE_40
+        else:
             self.game = GameWorldLarge()
         self.f.add_widget(self.game)
 
