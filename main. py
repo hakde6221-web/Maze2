@@ -893,6 +893,10 @@ class GameWorldBase(Widget):
 
     def _create_enemy_group(self, pattern_idx, body_color, mark_color):
         egroup = InstructionGroup()
+        # Луч врага (рисуется ПЕРЕД телом в мировых координатах — под своим
+        # врагом, но над ранее отрисованными врагами).
+        beam_group = InstructionGroup()
+        egroup.add(beam_group)
         egroup.add(PushMatrix())
         translate = Translate(0, 0)
         egroup.add(translate)
@@ -916,9 +920,9 @@ class GameWorldBase(Widget):
             edots.append(d)
             edot_colors.append(dcol)
         egroup.add(PopMatrix())
-        self.dynamic_group.add(egroup)
+        self.enemy_group.add(egroup)
         return (egroup, translate, emark, star_group, edots, pattern,
-                body_color_inst, mark_color_inst, edot_colors)
+                body_color_inst, mark_color_inst, edot_colors, beam_group)
 
     def _apply_star_rotation(self, en, dx, dy):
         tris = en.get('g_star_triangles')
@@ -949,10 +953,12 @@ class GameWorldBase(Widget):
         elif dx == 0 and dy == -1:  fa = 180
         elif dx == -1 and dy == 0:  fa = 270
         else:                       fa = 0
+        # Метка удлинена на ~40% по сравнению с прежними значениями (17.5 / 50.0).
+        # Ширина линии (width=2) и радиус (18) не изменены.
         if en['turn_rule'] == 'right':
-            a_s, a_e = fa - 17.5, fa + 50.0
+            a_s, a_e = fa - 24.5, fa + 70.0
         else:
-            a_s, a_e = fa - 50.0, fa + 17.5
+            a_s, a_e = fa - 70.0, fa + 24.5
         en['g_mark'].circle = (0, 0, 18, a_s, a_e)
         pts, dots = en['g_pattern'], en['g_dots']
         for i in range(len(pts)):
@@ -1037,7 +1043,7 @@ class GameWorldBase(Widget):
         mcolor = (0, 0, 0) if is_carrier else mark_color
         pattern_idx = en_state.get('pattern_idx', 0)
         (egroup, translate, emark, star_group, edots, pattern,
-         body_inst, mark_inst, edot_colors) = \
+         body_inst, mark_inst, edot_colors, beam_group) = \
             self._create_enemy_group(pattern_idx, body_color, mcolor)
         if saved:
             cur = tuple(en_state.get('current_cell', (int(en_state['grid_x']), int(en_state['grid_y']))))
@@ -1066,6 +1072,7 @@ class GameWorldBase(Widget):
             'g_star_group': star_group, 'g_star_triangles': [], 'g_star_local': [],
             'g_star_color': None,
             'g_dots': edots, 'g_pattern': pattern, 'g_dot_colors': edot_colors,
+            'g_beam_group': beam_group,
             'body_color_inst': body_inst, 'mark_color_inst': mark_inst,
             'sleep_counter': sleep_counter, '_just_moved': False,
             '_just_woke': False, 'pause_after_door': False,
@@ -1084,7 +1091,14 @@ class GameWorldBase(Widget):
         self.matrix_group = InstructionGroup(); self.canvas.add(self.matrix_group)
         self.static_group = InstructionGroup(); self.canvas.add(self.static_group)
         self.interactive_group = InstructionGroup(); self.canvas.add(self.interactive_group)
+        # dynamic_group — только игрок (луч зрения его перекрывает).
         self.dynamic_group = InstructionGroup(); self.canvas.add(self.dynamic_group)
+        # los_group — треугольники зрения (над игроком и над наземными звёздами).
+        # Лучи врагов теперь рисуются в их собственных beam_group внутри enemy_group,
+        # а не здесь. los_group остаётся пустым для совместимости порядка.
+        self.los_group = InstructionGroup(); self.canvas.add(self.los_group)
+        # enemy_group — враги (поверх луча зрения).
+        self.enemy_group = InstructionGroup(); self.canvas.add(self.enemy_group)
         self.doors_group = InstructionGroup(); self.canvas.add(self.doors_group)
         self.canvas.add(PopMatrix())
         self.canvas.add(StencilUnUse())
@@ -1361,10 +1375,6 @@ class GameWorldBase(Widget):
             self.cached_btn_color = min_color
 
     def _get_compass_target(self):
-        # Компас (только для режима 40x40) указывает только на люк (если открыт)
-        # либо на оставленную звезду. Враги-носители игнорируются.
-        # При равной дистанции до нескольких звёзд выбирается звезда с меньшим
-        # color_id (красная -> зелёная -> жёлтая -> голубая -> белая).
         if self.hatch_open:
             return self.hatch_pos
         if self.ground_buttons:
@@ -1978,6 +1988,58 @@ class GameWorldBase(Widget):
         if ticked or state_dirty:
             self._update_hud_state()
 
+    def _draw_los_beams(self):
+        if not hasattr(self, 'los_group'):
+            return
+        # los_group остаётся пустым: лучи теперь живут в beam_group каждого врага,
+        # чтобы порядок отрисовки был beam_N, body_N (враг над своим лучом).
+        self.los_group.clear()
+        for en in self.enemies:
+            bg = en.get('g_beam_group')
+            if bg is not None:
+                bg.clear()
+        if not self.enemies:
+            return
+        progress = 1.0
+        if self.enemy_step_interval > 0:
+            progress = max(0.0, min(1.0, self.enemy_time / self.enemy_step_interval))
+        for en in self.enemies:
+            vc = en.get('visible_cells')
+            if not vc:
+                continue
+            edir = en['dir']
+            edx, edy = edir.x, edir.y
+            if edx == 0 and edy == 0:
+                continue
+            ccx, ccy = en['current_cell']
+            ncx, ncy = en['next_cell']
+            # Луч начинается из центра тела врага.
+            ex = (ccx * TOTAL_STEP + (ncx - ccx) * TOTAL_STEP * progress
+                  + CELL_SIZE / 2)
+            ey = (ccy * TOTAL_STEP + (ncy - ccy) * TOTAL_STEP * progress
+                  + CELL_SIZE / 2)
+            count = len(vc)
+            tx = (ccx + int(edx) * count) * TOTAL_STEP + CELL_SIZE / 2
+            ty = (ccy + int(edy) * count) * TOTAL_STEP + CELL_SIZE / 2
+            dx = tx - ex
+            dy = ty - ey
+            dist = math.sqrt(dx * dx + dy * dy)
+            if dist < 1:
+                continue
+            px, py = -dy / dist, dx / dist
+            cid = en.get('color_id', 0)
+            col = self.color_palette[cid] if (self.color_palette and 0 <= cid < len(self.color_palette)) else (1, 0, 0)
+            fw = CELL_SIZE * 0.42
+            bg = en.get('g_beam_group')
+            if bg is not None:
+                # alpha = 0.25 (было 0.5).
+                bg.add(Color(col[0], col[1], col[2], 0.25))
+                bg.add(Triangle(points=[
+                    ex, ey,
+                    tx + px * fw, ty + py * fw,
+                    tx - px * fw, ty - py * fw,
+                ]))
+
     def _draw_player_eyes(self):
         self.p_body_inst.pos = (self.p_pixel.x, self.p_pixel.y)
         pcx, pcy = self.p_pixel.x + CELL_SIZE / 2, self.p_pixel.y + CELL_SIZE / 2
@@ -2413,6 +2475,7 @@ class GameWorldStatic(GameWorldBase):
             _draw_star(self.interactive_group, scx, scy, star_size, rgb)
 
     def draw_entities(self, *args):
+        self._draw_los_beams()
         self._draw_player_eyes()
         progress = 1.0
         if self.enemy_step_interval > 0:
@@ -2921,6 +2984,7 @@ class GameWorldLarge(GameWorldBase):
             _draw_star(self.interactive_group, scx, scy, star_size, rgb)
 
     def draw_entities(self, gx, gy):
+        self._draw_los_beams()
         self._draw_player_eyes()
         progress = 1.0
         if self.enemy_step_interval > 0:
@@ -2968,10 +3032,11 @@ class GameWorldLarge(GameWorldBase):
         elif dx == 0 and dy == -1:  fa = 180
         elif dx == -1 and dy == 0:  fa = 270
         else:                       fa = 180
+        # Синхронно с игровой отрисовкой: метка удлинена на ~40%.
         if en['turn_rule'] == 'right':
-            a_s, a_e = fa - 17.5, fa + 50.0
+            a_s, a_e = fa - 24.5, fa + 70.0
         else:
-            a_s, a_e = fa - 50.0, fa + 17.5
+            a_s, a_e = fa - 70.0, fa + 24.5
         mc = en.get('mark_color', (0, 0, 0))
         group.add(Color(*mc))
         group.add(Line(circle=(cx, cy, 18 * scale, a_s, a_e), width=2 * scale))
@@ -3197,8 +3262,6 @@ class GameWorldLarge(GameWorldBase):
             self.hud_dynamic_state = dyn_cur
             self.draw_hud_dynamic()
 
-        # Второй счётчик (ближайший враг): при ничьей берём врага
-        # с минимальным idx — счётчик показывает и дистанцию, и иконку.
         min_d, min_enemies = 9999, []
         for en in self.enemies:
             d = self.player_dists.get(en['current_cell'], 9999)
@@ -3210,9 +3273,6 @@ class GameWorldLarge(GameWorldBase):
         if min_enemies:
             target_en = min(min_enemies, key=lambda e: e['idx'])
 
-        # Первый счётчик (цель компаса): люк или звезда. При ничьей
-        # между звёздами берём звезду с минимальным color_id
-        # (красная -> зелёная -> жёлтая -> голубая -> белая).
         btn_dist = None
         btn_color = None
         show_hatch = False
