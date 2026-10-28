@@ -1154,8 +1154,8 @@ class GameWorldBase(Widget):
 
     def _get_los_blockers(self):
         p_cell = (int(self.player_grid.x), int(self.player_grid.y))
-        return {en['current_cell'] for en in self.enemies
-                if en['current_cell'] != p_cell}
+        return {en['next_cell'] for en in self.enemies
+                if en['next_cell'] != p_cell}
 
     def _restore_union_visible_cells(self):
         if not self.enemies:
