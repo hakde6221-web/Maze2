@@ -1450,7 +1450,7 @@ class GameWorldBase(Widget):
             return set()
         visible = set()
         for cell in chain:
-            if cell in enemy_positions:
+            if cell in enemy_positions and cell != en['next_cell']:
                 break
             visible.add(cell)
         return visible
@@ -1709,8 +1709,6 @@ class GameWorldBase(Widget):
             else:
                 en['pause_after_door'] = False
 
-        enemy_positions = self._get_los_blockers()
-
         pre_sleep_active = [en for en in self.enemies if id(en) not in was_sleeping]
         intent_active = [en for en in pre_sleep_active
                          if not en.get('pause_after_door', False)]
@@ -1739,7 +1737,6 @@ class GameWorldBase(Widget):
                         self.full_sleep_cycles += 1
                     was_sleeping.add(id(chosen))
 
-        union_vis = set()
         for en in self.enemies:
             if id(en) not in was_sleeping:
                 if en.get('pause_after_door', False):
@@ -1757,6 +1754,11 @@ class GameWorldBase(Widget):
                         en['dir'] = new_dir
                         en['last_dir'] = new_dir
                         en['next_cell'] = tgt
+
+        enemy_positions = self._get_los_blockers()
+
+        union_vis = set()
+        for en in self.enemies:
             en['visible_cells'] = self.get_enemy_los(en, enemy_positions)
             union_vis |= en['visible_cells']
 
