@@ -1047,7 +1047,7 @@ class GameWorldBase(Widget):
             pixel = Vector(en_state['pixel_x'], en_state['pixel_y'])
             direction = Vector(en_state['dir_x'], en_state['dir_y'])
             last_dir = Vector(en_state['last_dir_x'], en_state['last_dir_y'])
-            sleep_counter = int(en_state.get('sleep_counter', 0))
+            sleep_counter = 0
         else:
             ev = Vector(e_spawn[0], e_spawn[1])
             cur = (int(ev.x), int(ev.y))
@@ -1438,8 +1438,6 @@ class GameWorldBase(Widget):
         return chain
 
     def get_enemy_los(self, en, enemy_positions):
-        if en.get('sleep_counter', 0) > 0 or en.get('_just_woke', False):
-            return set()
         ex, ey = en['current_cell']
         edir = en['dir']
         if edir == VEC_ZERO:
@@ -1674,30 +1672,8 @@ class GameWorldBase(Widget):
 
     def enemy_tick(self):
         app = App.get_running_app()
-        was_sleeping = set()
-        for en in self.enemies:
-            sc = en.get('sleep_counter', 0)
-            if sc > 0:
-                was_sleeping.add(id(en))
-                en['sleep_counter'] = sc - 1
-                en['next_cell'] = en['current_cell']
-                en['_just_woke'] = (sc == 1)
-                if sc == 1:
-                    self._update_sleep_visual(en)
-                    if en['last_dir'] != VEC_ZERO:
-                        en['dir'] = Vector(en['last_dir'].x, en['last_dir'].y)
-                    else:
-                        en['dir'] = VEC_ZERO
-                else:
-                    en['dir'] = VEC_ZERO
-            else:
-                en['_just_woke'] = False
-        any_sleeping = len(was_sleeping) > 0
 
         for en in self.enemies:
-            if id(en) in was_sleeping:
-                en['_just_moved'] = False
-                continue
             old = en['current_cell']
             en['current_cell'] = en['next_cell']
             en['grid'] = Vector(*en['current_cell'])
@@ -1709,51 +1685,26 @@ class GameWorldBase(Widget):
             else:
                 en['pause_after_door'] = False
 
-        pre_sleep_active = [en for en in self.enemies if id(en) not in was_sleeping]
-        intent_active = [en for en in pre_sleep_active
+        intent_active = [en for en in self.enemies
                          if not en.get('pause_after_door', False)]
         intents = self._resolve_enemy_intents(intent_active)
 
-        if not any_sleeping and self.sleep_cycle_set:
-            reverse_order = (self.full_sleep_cycles % 2 == 1)
-            ordered = sorted(self.sleep_cycle_set, reverse=reverse_order)
-            if ordered:
-                next_idx = ordered[0]
-                chosen = None
-                for en in pre_sleep_active:
-                    if en['idx'] == next_idx:
-                        chosen = en
-                        break
-                if chosen is not None:
-                    chosen['sleep_counter'] = 2
-                    chosen['dir'] = VEC_ZERO
-                    chosen['next_cell'] = chosen['current_cell']
-                    chosen['_just_moved'] = True
-                    chosen['pause_after_door'] = False
-                    self._update_sleep_visual(chosen)
-                    self.sleep_cycle_set.discard(chosen['idx'])
-                    if not self.sleep_cycle_set:
-                        self.sleep_cycle_set = set(e['idx'] for e in self.enemies)
-                        self.full_sleep_cycles += 1
-                    was_sleeping.add(id(chosen))
-
         for en in self.enemies:
-            if id(en) not in was_sleeping:
-                if en.get('pause_after_door', False):
+            if en.get('pause_after_door', False):
+                en['next_cell'] = en['current_cell']
+                en['pause_after_door'] = False
+            else:
+                tgt = intents.get(en['idx'])
+                if tgt is None:
                     en['next_cell'] = en['current_cell']
-                    en['pause_after_door'] = False
+                elif tgt == en['current_cell']:
+                    en['dir'] = VEC_ZERO
+                    en['next_cell'] = en['current_cell']
                 else:
-                    tgt = intents.get(en['idx'])
-                    if tgt is None:
-                        en['next_cell'] = en['current_cell']
-                    elif tgt == en['current_cell']:
-                        en['dir'] = VEC_ZERO
-                        en['next_cell'] = en['current_cell']
-                    else:
-                        new_dir = Vector(tgt[0] - en['current_cell'][0], tgt[1] - en['current_cell'][1])
-                        en['dir'] = new_dir
-                        en['last_dir'] = new_dir
-                        en['next_cell'] = tgt
+                    new_dir = Vector(tgt[0] - en['current_cell'][0], tgt[1] - en['current_cell'][1])
+                    en['dir'] = new_dir
+                    en['last_dir'] = new_dir
+                    en['next_cell'] = tgt
 
         enemy_positions = self._get_los_blockers()
 
@@ -1779,8 +1730,6 @@ class GameWorldBase(Widget):
                 continue
             if en.get('_just_picked', False):
                 continue
-            if en.get('sleep_counter', 0) > 0:
-                continue
             if not en.get('_just_moved', False):
                 continue
             if en['current_cell'] not in self.dead_ends_set:
@@ -1789,8 +1738,6 @@ class GameWorldBase(Widget):
             just_dropped_ids.add(id(en))
 
         for en in self.enemies:
-            if id(en) in was_sleeping:
-                continue
             if not en.get('_just_moved', False):
                 continue
             if en.get('is_carrier', False):
@@ -2092,19 +2039,7 @@ class GameWorldBase(Widget):
             picked = des_sorted[:n]
             for p in picked:
                 all_picks.append((p, cid, center_dist.get(p, 0)))
-
-        final_picks = []
-        neighbor_counts = {}
-        for (pos, cid, dist) in all_picks:
-            temp = dict(neighbor_counts)
-            for nb in self.adj_list.get(pos, []):
-                temp[nb] = temp.get(nb, 0) + 1
-            if any(c > 2 for c in temp.values()):
-                continue
-            final_picks.append((pos, cid, dist))
-            for nb in self.adj_list.get(pos, []):
-                neighbor_counts[nb] = neighbor_counts.get(nb, 0) + 1
-        return final_picks
+        return all_picks
 
     def _prepare_cell_avails(self):
         self.cell_avails = {(x, y): [Vector(v) for d, v in DIRS.items() if self.maze_data[y][x][d] == 0]
