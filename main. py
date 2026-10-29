@@ -7,7 +7,6 @@ import threading
 import os
 import pickle
 import tempfile
-import itertools
 from collections import deque
 from kivy.app import App
 from kivy.uix.widget import Widget
@@ -2042,98 +2041,6 @@ class GameWorldBase(Widget):
                 all_picks.append((p, cid, center_dist.get(p, 0)))
         return all_picks
 
-    def _select_carriers(self):
-        by_color = {}
-        for en in self.enemies:
-            cid = en.get('color_id', 0)
-            by_color.setdefault(cid, []).append(en)
-
-        if not by_color:
-            return
-
-        active_colors = sorted(by_color.keys())
-        color_lists = [by_color[c] for c in active_colors]
-
-        def cell_dist(a, b):
-            ax, ay = a['current_cell']
-            bx, by = b['current_cell']
-            dx = ax - bx
-            dy = ay - by
-            return dx * dx + dy * dy
-
-        if len(color_lists) == 1:
-            en = color_lists[0][0]
-            en['is_carrier'] = True
-            self._update_carrier_visual(en)
-            return
-
-        best_combo = None
-        best_min_d = -1
-
-        total = 1
-        for lst in color_lists:
-            total *= len(lst)
-
-        if total <= 100000:
-            for combo in itertools.product(*color_lists):
-                min_d = float('inf')
-                pruned = False
-                for i in range(len(combo)):
-                    for j in range(i + 1, len(combo)):
-                        d = cell_dist(combo[i], combo[j])
-                        if d < min_d:
-                            min_d = d
-                            if min_d <= best_min_d:
-                                pruned = True
-                                break
-                    if pruned:
-                        break
-                if pruned:
-                    continue
-                if min_d > best_min_d:
-                    best_min_d = min_d
-                    best_combo = combo
-        else:
-            for start_ci in range(len(color_lists)):
-                for seed in color_lists[start_ci]:
-                    combo = [seed]
-                    used_ci = {start_ci}
-                    while len(combo) < len(color_lists):
-                        best_en = None
-                        best_d = -1
-                        best_ci = -1
-                        for ci in range(len(color_lists)):
-                            if ci in used_ci:
-                                continue
-                            for en in color_lists[ci]:
-                                min_d = min(cell_dist(en, p) for p in combo)
-                                if min_d > best_d:
-                                    best_d = min_d
-                                    best_en = en
-                                    best_ci = ci
-                        if best_en is None:
-                            break
-                        combo.append(best_en)
-                        used_ci.add(best_ci)
-                    if len(combo) != len(color_lists):
-                        continue
-                    min_pair = float('inf')
-                    for i in range(len(combo)):
-                        for j in range(i + 1, len(combo)):
-                            d = cell_dist(combo[i], combo[j])
-                            if d < min_pair:
-                                min_pair = d
-                    if min_pair > best_min_d:
-                        best_min_d = min_pair
-                        best_combo = combo
-
-        if best_combo is None:
-            return
-
-        for en in best_combo:
-            en['is_carrier'] = True
-            self._update_carrier_visual(en)
-
     def _prepare_cell_avails(self):
         self.cell_avails = {(x, y): [Vector(v) for d, v in DIRS.items() if self.maze_data[y][x][d] == 0]
                             for y in range(self.grid_h) for x in range(self.grid_w)}
@@ -2253,7 +2160,7 @@ class GameWorldStatic(GameWorldBase):
                 for i, (pos, dist) in enumerate(by_color[cid]):
                     pat_idx = color_pool[i % len(color_pool)] if color_pool else 0
                     rule = 'right' if pat_idx % 2 == 0 else 'left'
-                    is_carrier = False
+                    is_carrier = (i == 0)
                     prof = {'pattern_idx': pat_idx, 'turn_rule': rule,
                             'speed': 0.5, 'color': WALL_COLOR}
                     self.enemies.append(self._make_enemy_dict(
@@ -2262,8 +2169,6 @@ class GameWorldStatic(GameWorldBase):
                     slot_idx += 1
 
             self.sleep_cycle_set = set(e['idx'] for e in self.enemies)
-
-            self._select_carriers()
 
             carriers = sum(1 for en in self.enemies if en.get('is_carrier'))
             if carriers < BUTTONS_TO_OPEN:
@@ -2736,7 +2641,7 @@ class GameWorldLarge(GameWorldBase):
                         break
                     pat_idx = color_pool[i % len(color_pool)] if color_pool else 0
                     rule = 'right' if pat_idx % 2 == 0 else 'left'
-                    is_carrier = False
+                    is_carrier = (i == 0)
                     prof = {'pattern_idx': pat_idx, 'turn_rule': rule,
                             'speed': 0.5, 'color': WALL_COLOR}
                     self.enemies.append(self._make_enemy_dict(
@@ -2745,8 +2650,6 @@ class GameWorldLarge(GameWorldBase):
                     slot_idx += 1
 
             self.sleep_cycle_set = set(e['idx'] for e in self.enemies)
-
-            self._select_carriers()
 
             carriers = sum(1 for en in self.enemies if en.get('is_carrier'))
             if carriers < BUTTONS_TO_OPEN:
@@ -3817,9 +3720,9 @@ class MenuScreen(Screen):
         l.add_widget(self._icon)
         for y, text, subtext, mode in [
                 (0.62, '40x40', '80 enemies', MODE_40),
-                (0.47, '20x20', '40 enemies', MODE_20),
-                (0.32, '15x15', '20 enemies', MODE_15),
-                (0.17, '10x10', '10 enemies', MODE_10)]:
+                (0.47, '20x20', '20 enemies', MODE_20),
+                (0.32, '15x15', '10 enemies', MODE_15),
+                (0.17, '10x10', '5 enemies', MODE_10)]:
             btn = MenuModeButton(subtext=subtext, text=text, font_size='26sp', bold=True,
                                  color=(*TEXT_COLOR, 1),
                                  size_hint=(.6, .11), pos_hint={'center_x': .5, 'center_y': y})
