@@ -36,11 +36,11 @@ NUM_ENEMIES = 20
 
 MAZE_W_10, MAZE_H_10 = 10, 10
 NUM_DEAD_ENDS_10 = 25
-NUM_ENEMIES_10 = 5
+NUM_ENEMIES_10 = 10
 
 MAZE_W_15, MAZE_H_15 = 15, 15
-NUM_DEAD_ENDS_15 = 55
-NUM_ENEMIES_15 = 10
+NUM_DEAD_ENDS_15 = 50
+NUM_ENEMIES_15 = 5
 
 MAZE_WORLD_DIM = MAZE_W * TOTAL_STEP + WALL_THICK
 MAZE_WORLD_MIN = -WALL_THICK
@@ -1311,6 +1311,11 @@ class GameWorldBase(Widget):
         for idx_list in claimed.values():
             if len(idx_list) > 1:
                 idx_list.sort()
+                by_idx = {en['idx']: en for en in active_enemies}
+                for participant_idx in idx_list:
+                    en = by_idx[participant_idx]
+                    en['turn_rule'] = 'left' if en['turn_rule'] == 'right' else 'right'
+                    en['last_drawn_dir'] = (None, None)
                 for loser in idx_list[1:]:
                     intents[loser] = None
 
@@ -1680,7 +1685,44 @@ class GameWorldBase(Widget):
             en['_just_moved'] = (old != en['current_cell'])
             if en['_just_moved']:
                 key = (old, en['current_cell']) if old < en['current_cell'] else (en['current_cell'], old)
-                en['pause_after_door'] = (key in self.doors)
+                pause = (key in self.doors) and (old in self.pocket_cells)
+                if pause:
+                    d = en['dir']
+                    dx, dy = int(d.x), int(d.y)
+                    if dx == 0 and dy == 0:
+                        pause = False
+                    else:
+                        cx, cy = en['current_cell']
+                        nx, ny = cx + dx, cy + dy
+                        can_ahead = False
+                        if 0 <= nx < self.grid_w and 0 <= ny < self.grid_h:
+                            dir_letter = 'E' if dx == 1 else 'W' if dx == -1 else 'N' if dy == 1 else 'S'
+                            if self.maze_data[cy][cx][dir_letter] == 0:
+                                a, b = (cx, cy), (nx, ny)
+                                edge = (a, b) if a < b else (b, a)
+                                door_cid = self.door_color_id.get(edge)
+                                if door_cid is None or door_cid == en.get('color_id'):
+                                    target = (nx, ny)
+                                    occupied = False
+                                    for other in self.enemies:
+                                        if other is en:
+                                            continue
+                                        if other['current_cell'] == target:
+                                            occupied = True
+                                            break
+                                    if not occupied:
+                                        can_ahead = True
+                        pause = can_ahead
+                        if pause:
+                            occupied_all = {o['current_cell'] for o in self.enemies}
+                            tgt = self._compute_intent(en, occupied_all, frozenset())
+                            if tgt is None or tgt == en['current_cell']:
+                                pause = False
+                            else:
+                                tdx, tdy = tgt[0] - cx, tgt[1] - cy
+                                if tdx == dx and tdy == dy:
+                                    pause = False
+                en['pause_after_door'] = pause
                 en['_just_picked'] = False
             else:
                 en['pause_after_door'] = False
@@ -1929,50 +1971,71 @@ class GameWorldBase(Widget):
     def _draw_los_beams(self):
         if not hasattr(self, 'los_group'):
             return
-        self.los_group.clear()
-        for en in self.enemies:
-            bg = en.get('g_beam_group')
-            if bg is not None:
-                bg.clear()
         if not self.enemies:
             return
         progress = 1.0
         if self.enemy_step_interval > 0:
             progress = max(0.0, min(1.0, self.enemy_time / self.enemy_step_interval))
         for en in self.enemies:
-            vc = en.get('visible_cells')
-            if not vc:
-                continue
-            edir = en['dir']
-            edx, edy = edir.x, edir.y
-            if edx == 0 and edy == 0:
-                continue
-            ccx, ccy = en['current_cell']
-            ncx, ncy = en['next_cell']
-            ex = (ccx * TOTAL_STEP + (ncx - ccx) * TOTAL_STEP * progress
-                  + CELL_SIZE / 2)
-            ey = (ccy * TOTAL_STEP + (ncy - ccy) * TOTAL_STEP * progress
-                  + CELL_SIZE / 2)
-            count = len(vc)
-            tx = (ccx + int(edx) * count) * TOTAL_STEP + CELL_SIZE / 2
-            ty = (ccy + int(edy) * count) * TOTAL_STEP + CELL_SIZE / 2
-            dx = tx - ex
-            dy = ty - ey
-            dist = math.sqrt(dx * dx + dy * dy)
-            if dist < 1:
-                continue
-            px, py = -dy / dist, dx / dist
-            cid = en.get('color_id', 0)
-            col = self.color_palette[cid] if (self.color_palette and 0 <= cid < len(self.color_palette)) else (1, 0, 0)
-            fw = CELL_SIZE * 0.42
             bg = en.get('g_beam_group')
-            if bg is not None:
-                bg.add(Color(col[0], col[1], col[2], 0.25))
-                bg.add(Triangle(points=[
-                    ex, ey,
-                    tx + px * fw, ty + py * fw,
-                    tx - px * fw, ty - py * fw,
-                ]))
+            if bg is None:
+                continue
+            beam = en.get('_beam_inst')
+            if beam is None:
+                color_inst = Color(0, 0, 0, 0)
+                tri = Triangle(points=[0, 0, 0, 0, 0, 0])
+                bg.add(color_inst)
+                bg.add(tri)
+                beam = {'color': color_inst, 'tri': tri,
+                        'rgba': (0, 0, 0, 0), 'active': False}
+                en['_beam_inst'] = beam
+
+            show = False
+            pts = None
+            new_rgba = None
+            vc = en.get('visible_cells')
+            if vc:
+                edir = en['dir']
+                edx, edy = edir.x, edir.y
+                if not (edx == 0 and edy == 0):
+                    ccx, ccy = en['current_cell']
+                    ncx, ncy = en['next_cell']
+                    ex = (ccx * TOTAL_STEP + (ncx - ccx) * TOTAL_STEP * progress
+                          + CELL_SIZE / 2)
+                    ey = (ccy * TOTAL_STEP + (ncy - ccy) * TOTAL_STEP * progress
+                          + CELL_SIZE / 2)
+                    count = len(vc)
+                    tx = (ccx + int(edx) * count) * TOTAL_STEP + CELL_SIZE / 2
+                    ty = (ccy + int(edy) * count) * TOTAL_STEP + CELL_SIZE / 2
+                    dx = tx - ex
+                    dy = ty - ey
+                    dist = math.sqrt(dx * dx + dy * dy)
+                    if dist >= 1:
+                        px, py = -dy / dist, dx / dist
+                        fw = CELL_SIZE * 0.42
+                        pts = [ex, ey,
+                               tx + px * fw, ty + py * fw,
+                               tx - px * fw, ty - py * fw]
+                        cid = en.get('color_id', 0)
+                        col = self.color_palette[cid] if (self.color_palette and 0 <= cid < len(self.color_palette)) else (1, 0, 0)
+                        new_rgba = (col[0], col[1], col[2], 0.25)
+                        show = True
+
+            color_inst = beam['color']
+            tri = beam['tri']
+            if show:
+                if beam['rgba'] != new_rgba:
+                    color_inst.rgba = new_rgba
+                    beam['rgba'] = new_rgba
+                if tri.points != pts:
+                    tri.points = pts
+                beam['active'] = True
+            else:
+                if beam['active']:
+                    color_inst.rgba = (0, 0, 0, 0)
+                    tri.points = [0, 0, 0, 0, 0, 0]
+                    beam['rgba'] = (0, 0, 0, 0)
+                    beam['active'] = False
 
     def _draw_player_eyes(self):
         self.p_body_inst.pos = (self.p_pixel.x, self.p_pixel.y)
