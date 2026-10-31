@@ -91,6 +91,11 @@ PAUSE_COLOR = (0.5, 0.8, 1.0)
 
 _MAX_SUBSTEPS = 15
 
+# Порог для быстрого отсечения врагов по клеткам перед проверкой касания.
+# Доказано: при разнице в обеих клетках (current+next) >= 3 по X (или по Y),
+# минимальное пиксельное расстояние > CELL_SIZE*0.85 (радиус касания).
+_ENEMY_TOUCH_CULL = 3
+
 
 def _compute_hud_dims(sw, has_autosave_digit=False):
     f_size = max(14, int(sw / 30))
@@ -910,14 +915,16 @@ class GameWorldBase(Widget):
         egroup.add(star_group)
         pattern = DOT_PATTERNS[pattern_idx] if 0 <= pattern_idx < len(DOT_PATTERNS) else []
         edots = []
-        edot_colors = []
+        # Оптимизация: один общий Color для всех точек. Точки всегда чёрные
+        # и всегда с одинаковой alpha, поэтому отдельные Color на каждую
+        # точку — лишние инструкции без визуального эффекта.
+        shared_dot_color = Color(0, 0, 0)
+        egroup.add(shared_dot_color)
         for (px, py) in pattern:
-            dcol = Color(0, 0, 0)
-            egroup.add(dcol)
             d = Ellipse(pos=(px - DOT_RAD, py - DOT_RAD), size=(DOT_SIZE, DOT_SIZE))
             egroup.add(d)
             edots.append(d)
-            edot_colors.append(dcol)
+        edot_colors = [shared_dot_color]
         egroup.add(PopMatrix())
         self.enemy_group.add(egroup)
         return (egroup, translate, emark, star_group, edots, pattern,
@@ -973,6 +980,7 @@ class GameWorldBase(Widget):
         alpha = SLEEP_ALPHA if sleeping else 1.0
         en['body_color_inst'].a = alpha
         en['mark_color_inst'].a = alpha
+        # g_dot_colors содержит один общий Color — итерируем один раз.
         for dc in en.get('g_dot_colors', ()):
             dc.a = alpha
 
@@ -1788,14 +1796,31 @@ class GameWorldBase(Widget):
                     app.root.get_screen('game').show_overlay('lose')
                     return
 
+            # --- Оптимизация проверки касания ---
+            # Быстро отсекаем врагов, у которых ОБА конца сегмента
+            # (current_cell и next_cell) удалены от клетки игрока более чем
+            # на _ENEMY_TOUCH_CULL по X или по Y. В силу смежности соседних
+            # клеток это гарантирует пиксельное расстояние
+            # >= (_ENEMY_TOUCH_CULL) * TOTAL_STEP, что заведомо больше радиуса
+            # касания CELL_SIZE*0.85. Результат тот же, что и без отсечения.
             _e_prog = max(0.0, min(1.0, self.enemy_time / self.enemy_step_interval)) if self.enemy_step_interval > 0 else 1.0
             TOUCH_SQ = (CELL_SIZE * 0.85) ** 2
+            _pgx = int(self.player_grid.x)
+            _pgy = int(self.player_grid.y)
+            _cull = _ENEMY_TOUCH_CULL
+            _ppx = self.p_pixel.x
+            _ppy = self.p_pixel.y
             for en in self.enemies:
                 ccx, ccy = en['current_cell']
                 ncx, ncy = en['next_cell']
+                if (ccx - _pgx > _cull or _pgx - ccx > _cull or
+                        ncx - _pgx > _cull or _pgx - ncx > _cull or
+                        ccy - _pgy > _cull or _pgy - ccy > _cull or
+                        ncy - _pgy > _cull or _pgy - ncy > _cull):
+                    continue
                 ex = ccx * TOTAL_STEP + (ncx - ccx) * TOTAL_STEP * _e_prog
                 ey = ccy * TOTAL_STEP + (ncy - ccy) * TOTAL_STEP * _e_prog
-                dx, dy = self.p_pixel.x - ex, self.p_pixel.y - ey
+                dx, dy = _ppx - ex, _ppy - ey
                 if dx * dx + dy * dy < TOUCH_SQ:
                     self.active = False
                     if self.snd_lose and not app.is_muted: self.snd_lose.play()
@@ -3273,16 +3298,14 @@ class GameWorldLarge(GameWorldBase):
             self.hud_dynamic_state = dyn_cur
             self.draw_hud_dynamic()
 
-        min_d, min_enemies = 9999, []
+        min_d = 9999
+        target_en = None
         for en in self.enemies:
             d = self.player_dists.get(en['current_cell'], 9999)
-            if d < min_d:
-                min_d, min_enemies = d, [en]
-            elif d == min_d:
-                min_enemies.append(en)
-        target_en = None
-        if min_enemies:
-            target_en = min(min_enemies, key=lambda e: e['idx'])
+            if d < min_d or (d == min_d and
+                             (target_en is None or en['idx'] < target_en['idx'])):
+                min_d = d
+                target_en = en
 
         btn_dist = None
         btn_color = None
