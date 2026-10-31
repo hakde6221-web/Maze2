@@ -647,27 +647,27 @@ SND_RELOAD_PATH = SoundGenerator.create_beep([300, 450, 600], [0.1, 0.1, 0.1], "
 SND_TROPHY_PATH = SoundGenerator.create_beep([523, 659, 784, 1047, 1319], [0.12, 0.12, 0.12, 0.15, 0.45], "trophy")
 SND_CHECKPOINT_PATH = SoundGenerator.create_beep([523, 880], [0.09, 0.18], "checkpoint")
 SND_PICKUP_PATH = SoundGenerator.create_beep(
-    [523.25, 659.25, 783.99, 1046.50, 783.99, 1046.50],
-    [0.09, 0.09, 0.09, 0.20, 0.09, 0.40], "pickup")
+    [261, 324, 395, 523, 394],
+    [0.1, 0.1, 0.1, 0.1, 0.1], "pickup")
 
 SND_VICTORY_PATH = SoundGenerator.create_beep(
     [196.00, 196.00, 261.63, 329.63, 392.00, 329.63, 392.00, 523.25],
     [0.20, 0.20, 0.20, 0.25, 0.30, 0.15, 0.25, 1.30], "victory2")
 
 _ENEMY_DROP_SPECS = [
-    ([220, 165, 131, 98],        [0.1, 0.1, 0.1, 0.1], "enemy_drop_0v3"),
-    ([261.5, 329.5, 392, 523.5], [0.1, 0.1, 0.1, 0.1], "enemy_drop_1v3"),
-    ([440, 330, 440, 330],       [0.1, 0.1, 0.1, 0.1], "enemy_drop_2v3"),
-    ([196, 233, 196, 233],       [0.1, 0.1, 0.1, 0.1], "enemy_drop_3v3"),
-    ([880, 659.5, 523.5, 392],   [0.1, 0.1, 0.1, 0.1], "enemy_drop_4v3"),
+    ([125, 250, 125, 250],        [0.19, 0.1, 0.19, 0.1], "enemy_drop_0v3"),
+    ([150, 300, 150, 300], [0.19, 0.1, 0.19, 0.1], "enemy_drop_1v3"),
+    ([175, 350, 175, 350],       [0.19, 0.1, 0.19, 0.1], "enemy_drop_2v3"),
+    ([200, 400, 200, 400],       [0.19, 0.1, 0.19, 0.1], "enemy_drop_3v3"),
+    ([225, 450, 225, 450],   [0.19, 0.1, 0.19, 0.1], "enemy_drop_4v3"),
 ]
 
 _ENEMY_PICKUP_SPECS = [
-    ([220, 165],      [0.1, 0.1], "enemy_pickup_0v3"),
-    ([261.5, 329.5],  [0.1, 0.1], "enemy_pickup_1v3"),
-    ([440, 330],      [0.1, 0.1], "enemy_pickup_2v3"),
-    ([196, 233],      [0.1, 0.1], "enemy_pickup_3v3"),
-    ([880, 659.5],    [0.1, 0.1], "enemy_pickup_4v3"),
+    ([125, 250],      [0.19, 0.1], "enemy_pickup_0v3"),
+    ([150, 300],  [0.19, 0.1], "enemy_pickup_1v3"),
+    ([175, 350],      [0.19, 0.1], "enemy_pickup_2v3"),
+    ([200, 400],      [0.19, 0.1], "enemy_pickup_3v3"),
+    ([225, 450],    [0.19, 0.1], "enemy_pickup_4v3"),
 ]
 
 SND_ENEMY_DROP_PATHS = [SoundGenerator.create_beep(f, d, n) for f, d, n in _ENEMY_DROP_SPECS]
