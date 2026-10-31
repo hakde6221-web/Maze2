@@ -811,6 +811,7 @@ def _round_hud_dist(d):
 class GameWorldBase(Widget):
     SAVE_VERSION = 0
     IS_LARGE = False
+    SPREAD_SPAWNS = False
 
     cached_btn_dist = None
     cached_btn_color = None
@@ -2065,7 +2066,6 @@ class GameWorldBase(Widget):
 
     def _pick_balanced_spawns(self, num_per_color, max_colors=5):
         by_color = {}
-        center_dist = self.get_topological_distances(self.hatch_pos)
         for de in self.dead_ends_set:
             edge = self.door_edges.get(de)
             if edge is None:
@@ -2080,13 +2080,54 @@ class GameWorldBase(Widget):
         n = min(num_per_color, min_avail)
         if n <= 0:
             return []
+
+        player_dists = self.get_topological_distances(self.hatch_pos)
+
+        if not self.SPREAD_SPAWNS:
+            all_picks = []
+            for cid in sorted(by_color.keys()):
+                des = by_color[cid]
+                des_sorted = sorted(des, key=lambda d: (-player_dists.get(d, 0), d))
+                picked = des_sorted[:n]
+                for p in picked:
+                    all_picks.append((p, cid, player_dists.get(p, 0)))
+            return all_picks
+
+        carriers = {}
+        carrier_dist = {}
+        for cid in sorted(by_color.keys()):
+            best_pos = None
+            best_score = -1
+            for pos in by_color[cid]:
+                score = player_dists.get(pos, 0)
+                for oc, om in carrier_dist.items():
+                    if oc != cid:
+                        d = om.get(pos, 0)
+                        if d < score:
+                            score = d
+                if score > best_score:
+                    best_score = score
+                    best_pos = pos
+            carriers[cid] = best_pos
+            carrier_dist[cid] = self.get_topological_distances(best_pos)
+
         all_picks = []
         for cid in sorted(by_color.keys()):
-            des = by_color[cid]
-            des_sorted = sorted(des, key=lambda d: (-center_dist.get(d, 0), d))
-            picked = des_sorted[:n]
-            for p in picked:
-                all_picks.append((p, cid, center_dist.get(p, 0)))
+            scored = []
+            for pos in by_color[cid]:
+                if pos == carriers[cid]:
+                    scored.append((pos, 10**9))
+                else:
+                    score = player_dists.get(pos, 0)
+                    for oc, om in carrier_dist.items():
+                        if oc != cid:
+                            d = om.get(pos, 0)
+                            if d < score:
+                                score = d
+                    scored.append((pos, score))
+            scored.sort(key=lambda x: (-x[1], x[0]))
+            for p, d in scored[:n]:
+                all_picks.append((p, cid, d))
         return all_picks
 
     def _prepare_cell_avails(self):
@@ -2577,6 +2618,7 @@ class GameWorld15(GameWorldStatic):
     WORLD_CX = MAZE_WORLD_CX_15
     MAX_ENEMIES = NUM_ENEMIES_15
     PATTERN_POOL = PATTERNS_15_BY_COLOR
+    SPREAD_SPAWNS = True
 
 
 class GameWorld20(GameWorldStatic):
@@ -2587,11 +2629,13 @@ class GameWorld20(GameWorldStatic):
     WORLD_CX = MAZE_WORLD_CX
     MAX_ENEMIES = NUM_ENEMIES
     PATTERN_POOL = PATTERNS_20_BY_COLOR
+    SPREAD_SPAWNS = True
 
 
 class GameWorldLarge(GameWorldBase):
     SAVE_VERSION = 15
     IS_LARGE = True
+    SPREAD_SPAWNS = True
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -3870,4 +3914,3 @@ class DoorsApp(App):
 
 if __name__ == '__main__':
     DoorsApp().run()
-
