@@ -1227,6 +1227,101 @@ class GameWorldBase(Widget):
                 door_edges[de] = edge
         return door_edges
 
+    def _compute_entrance_cell(self):
+        # FIX2: entrance is now the farthest-from-center cell adjacent to
+        # the outer wall, but only among CORRIDOR cells (excluding pocket /
+        # dead-end cells). Falls back to any outer-adjacent cell if for some
+        # reason no corridor-adjacent cell exists (practically never happens).
+        center_dists = self.get_topological_distances(self.hatch_pos)
+
+        def _scan(skip_pockets):
+            best_cell = None
+            best_side = None
+            best_d = -1
+            for cx in range(self.grid_w):
+                if self.maze_data[self.grid_h - 1][cx]['N'] == 1:
+                    cell = (cx, self.grid_h - 1)
+                    if not (skip_pockets and cell in self.pocket_cells):
+                        d = center_dists.get(cell, 0)
+                        if d > best_d:
+                            best_d, best_cell, best_side = d, cell, 'N'
+                if self.maze_data[0][cx]['S'] == 1:
+                    cell = (cx, 0)
+                    if not (skip_pockets and cell in self.pocket_cells):
+                        d = center_dists.get(cell, 0)
+                        if d > best_d:
+                            best_d, best_cell, best_side = d, cell, 'S'
+            for cy in range(self.grid_h):
+                if self.maze_data[cy][self.grid_w - 1]['E'] == 1:
+                    cell = (self.grid_w - 1, cy)
+                    if not (skip_pockets and cell in self.pocket_cells):
+                        d = center_dists.get(cell, 0)
+                        if d > best_d:
+                            best_d, best_cell, best_side = d, cell, 'E'
+                if self.maze_data[cy][0]['W'] == 1:
+                    cell = (0, cy)
+                    if not (skip_pockets and cell in self.pocket_cells):
+                        d = center_dists.get(cell, 0)
+                        if d > best_d:
+                            best_d, best_cell, best_side = d, cell, 'W'
+            return best_cell, best_side
+
+        best_cell, best_side = _scan(True)
+        if best_cell is None:
+            best_cell, best_side = _scan(False)
+        self.entrance_cell = best_cell
+        self.entrance_side = best_side
+
+    def _draw_entrance_hole(self, group, chunk=None):
+        if getattr(self, 'entrance_cell', None) is None:
+            return
+        cx_e, cy_e = self.entrance_cell
+        if chunk is not None:
+            min_x, max_x, min_y, max_y = chunk
+            if not (min_x <= cx_e < max_x and min_y <= cy_e < max_y):
+                return
+        side = self.entrance_side
+        px_e = cx_e * TOTAL_STEP
+        py_e = cy_e * TOTAL_STEP
+        # FIX2: entrance is always a corridor cell, so the missing wall part
+        # is painted in the corridor floor color (0.05, 0.05, 0.05).
+        fr, fg, fb = 0.05, 0.05, 0.05
+        half_t = WALL_THICK * 0.5
+        # Отсутствующая половина стены (внутренняя, обращённая в клетку) —
+        # заливаем цветом пола непрозрачно, как будто стены там нет.
+        group.add(Color(fr, fg, fb, 1))
+        if side == 'N':
+            group.add(Rectangle(pos=(px_e, py_e + CELL_SIZE),
+                                size=(CELL_SIZE, half_t)))
+        elif side == 'S':
+            group.add(Rectangle(pos=(px_e, py_e - half_t),
+                                size=(CELL_SIZE, half_t)))
+        elif side == 'E':
+            group.add(Rectangle(pos=(px_e + CELL_SIZE, py_e),
+                                size=(half_t, CELL_SIZE)))
+        elif side == 'W':
+            group.add(Rectangle(pos=(px_e - half_t, py_e),
+                                size=(half_t, CELL_SIZE)))
+        # FIX7: the remaining (outer) half of the wall is semi-transparent
+        # (alpha 0.5) while the entrance is closed. Once the hatch opens
+        # (5 stars collected), we draw it fully opaque in the floor color,
+        # so it visually disappears — same primitive, same cost, only the
+        # alpha value depends on hatch_open.
+        _second_alpha = 1.0 if getattr(self, 'hatch_open', False) else 0.5
+        group.add(Color(fr, fg, fb, _second_alpha))
+        if side == 'N':
+            group.add(Rectangle(pos=(px_e, py_e + CELL_SIZE + half_t),
+                                size=(CELL_SIZE, half_t)))
+        elif side == 'S':
+            group.add(Rectangle(pos=(px_e, py_e - WALL_THICK),
+                                size=(CELL_SIZE, half_t)))
+        elif side == 'E':
+            group.add(Rectangle(pos=(px_e + CELL_SIZE + half_t, py_e),
+                                size=(half_t, CELL_SIZE)))
+        elif side == 'W':
+            group.add(Rectangle(pos=(px_e - WALL_THICK, py_e),
+                                size=(half_t, CELL_SIZE)))
+
     def _prepare_door_data(self):
         app = App.get_running_app()
         pre_doors = None
@@ -1285,7 +1380,21 @@ class GameWorldBase(Widget):
                 (math.ceil(vx - eps),  math.ceil(vy - eps))}
 
     def get_avail(self, x, y):
-        return self.cell_avails.get((x, y), [])
+        dirs = self.cell_avails.get((x, y), [])
+        # FIX7: the entrance passage through the missing wall is available
+        # ONLY after the hatch has been opened (5 stars collected). Until
+        # then the entrance wall blocks the player exactly like any other
+        # wall. Only get_avail is affected; enemies use get_avail_for_color.
+        ent = getattr(self, 'entrance_cell', None)
+        if (ent is not None and (x, y) == ent
+                and getattr(self, 'hatch_open', False)):
+            extra = {
+                'N': Vector(0, 1), 'S': Vector(0, -1),
+                'E': Vector(1, 0), 'W': Vector(-1, 0),
+            }[self.entrance_side]
+            if extra not in dirs:
+                return list(dirs) + [extra]
+        return dirs
 
     def get_avail_for_color(self, x, y, cid):
         if cid is None:
@@ -1380,7 +1489,8 @@ class GameWorldBase(Widget):
 
     def _refresh_player_dists(self):
         start_cell = (int(self.player_grid.x), int(self.player_grid.y))
-        targets = {self.hatch_pos}
+        # FIX8: hatch removed — the relevant goal cell is the entrance.
+        targets = {self.entrance_cell}
         for en in self.enemies:
             targets.add(en['current_cell'])
         for pos in self.ground_buttons:
@@ -1392,7 +1502,7 @@ class GameWorldBase(Widget):
         self.cached_btn_dist = None
         self.cached_btn_color = None
         if self.hatch_open:
-            d = self.player_dists.get(self.hatch_pos, 9999)
+            d = self.player_dists.get(self.entrance_cell, 9999)
             if d < 9999:
                 self.cached_btn_dist = d
             return
@@ -1411,7 +1521,8 @@ class GameWorldBase(Widget):
 
     def _get_compass_target(self):
         if self.hatch_open:
-            return self.hatch_pos
+            # FIX8: hatch removed — the target is now the entrance.
+            return self.entrance_cell
         if self.ground_buttons:
             best_pos = None
             best_d = 9999
@@ -1502,10 +1613,22 @@ class GameWorldBase(Widget):
             return
         if self.collected_count >= BUTTONS_TO_OPEN:
             self.hatch_open = True
+            # FIX7: entrance is now open for passage. Redraw the static
+            # layer once so the outer half of the entrance wall visually
+            # disappears. This fires exactly once per game (when the 5th
+            # star is picked up) — no per-frame cost, no new checks in
+            # update().
+            if self.IS_LARGE:
+                self._drawn_static_chunk = None
+                self.draw_static(int(self.player_grid.x),
+                                 int(self.player_grid.y))
+            else:
+                self._static_built = False
+                self.draw_static()
 
     def _drop_button(self, en):
         if not en.get('is_carrier', False):
-            return
+            return None
         pos = en['current_cell']
         edge = self.door_edges.get(pos)
         cid = self.door_color_id.get(edge, 0) if edge is not None else 0
@@ -1513,29 +1636,23 @@ class GameWorldBase(Widget):
         en['is_carrier'] = False
         self._update_carrier_visual(en)
         self.interactive_redraw_needed = True
-        app = App.get_running_app()
-        if 0 <= cid < len(self.snd_enemy_drop):
-            snd = self.snd_enemy_drop[cid]
-            if snd and not app.is_muted:
-                snd.play()
+        # FIX9b: sound is decided once per tick in enemy_tick, not here.
+        return cid
 
     def _pickup_button(self, en):
         if en.get('is_carrier', False):
-            return
+            return None
         pos = en['current_cell']
         if pos not in self.ground_buttons:
-            return
+            return None
         cid = self.ground_buttons[pos]
         del self.ground_buttons[pos]
         en['is_carrier'] = True
         self._update_carrier_visual(en)
         self.interactive_redraw_needed = True
-        app = App.get_running_app()
-        if 0 <= cid < len(self.snd_enemy_pickup):
-            snd = self.snd_enemy_pickup[cid]
-            if snd and not app.is_muted:
-                snd.play()
         en['_just_picked'] = True
+        # FIX9b: sound is decided once per tick in enemy_tick, not here.
+        return cid
 
     def save_game_state(self):
         enemies_state = []
@@ -1773,6 +1890,11 @@ class GameWorldBase(Widget):
                 return
 
         just_dropped_ids = set()
+        # FIX9b: at most ONE star-manipulation sound per tick, even if
+        # some enemies drop stars while others pick them up. Priority by
+        # colour id: red (0) wins, white (4) is last. Ties on the same
+        # colour go to drop.
+        _star_events = []   # list of (cid, is_pickup)
         for en in self.enemies:
             if not en.get('is_carrier', False):
                 continue
@@ -1782,8 +1904,10 @@ class GameWorldBase(Widget):
                 continue
             if en['current_cell'] not in self.dead_ends_set:
                 continue
-            self._drop_button(en)
+            _c = self._drop_button(en)
             just_dropped_ids.add(id(en))
+            if _c is not None:
+                _star_events.append((_c, False))
 
         for en in self.enemies:
             if not en.get('_just_moved', False):
@@ -1793,9 +1917,20 @@ class GameWorldBase(Widget):
             if id(en) in just_dropped_ids:
                 continue
             if en['current_cell'] in self.ground_buttons:
-                self._pickup_button(en)
+                _c = self._pickup_button(en)
                 self._refresh_player_dists()
                 self._update_compass()
+                if _c is not None:
+                    _star_events.append((_c, True))
+
+        if _star_events:
+            _c, _is_pickup = min(_star_events)
+            _snd_list = (self.snd_enemy_pickup if _is_pickup
+                         else self.snd_enemy_drop)
+            if 0 <= _c < len(_snd_list):
+                _snd = _snd_list[_c]
+                if _snd and not app.is_muted:
+                    _snd.play()
 
         self.enemy_tick_counter += 1
 
@@ -1892,22 +2027,7 @@ class GameWorldBase(Widget):
                                 self.draw_interactive(*self.last_drawn_chunk)
                         else:
                             self.interactive_redraw_needed = True
-                    if self.hatch_open and (gx, gy) == self.hatch_pos:
-                        if (gx, gy) in self.union_visible_cells:
-                            self.active = False
-                            if self.snd_lose and not app.is_muted: self.snd_lose.play()
-                            app.root.get_screen('game').show_overlay('lose')
-                            return
-                        self.active = False
-                        if self.snd_victory and not app.is_muted: self.snd_victory.play()
-                        self.player_group.clear()
-                        self.hatch_open = False
-                        if self.IS_LARGE:
-                            self.draw_interactive(gx, gy)
-                        else:
-                            self.draw_interactive()
-                        app.root.get_screen('game').show_overlay('win')
-                        return
+                    # FIX8: hatch removed — win only via exit through entrance.
 
                 avail = self.get_avail(gx, gy)
                 if self.current_joy_dir is not None:
@@ -1943,6 +2063,43 @@ class GameWorldBase(Widget):
 
                 if self.p_dir != VEC_ZERO:
                     ngx, ngy = gx + int(self.p_dir.x), gy + int(self.p_dir.y)
+                    # FIX6: exit is now handled the same way as a normal
+                    # turn. p_dir was set by the same "p_dir == VEC_ZERO"
+                    # block above (get_avail now exposes the outward
+                    # direction on the entrance cell). The only difference
+                    # from a regular move is that the target cell lies
+                    # outside the grid — that means the player is stepping
+                    # through the entrance hole. We then play a short slide
+                    # (pure p_pixel animation, no game state), hide the
+                    # player, and show victory — no per-frame checks in the
+                    # loop, no pixel tests.
+                    if not (0 <= ngx < self.grid_w and 0 <= ngy < self.grid_h):
+                        self.active = False
+                        self.last_p_dir = Vector(self.p_dir)
+                        _sx, _sy = self.p_pixel.x, self.p_pixel.y
+                        _ex = ngx * TOTAL_STEP
+                        _ey = ngy * TOTAL_STEP
+                        _st = {'i': 0}
+                        _N = 24  # ~0.4s at 60 fps
+
+                        def _exit_slide(dt, g=self, _sx=_sx, _sy=_sy,
+                                        _ex=_ex, _ey=_ey, _st=_st, _N=_N,
+                                        app=app):
+                            _st['i'] += 1
+                            t = min(1.0, _st['i'] / _N)
+                            g.p_pixel.x = _sx + (_ex - _sx) * t
+                            g.p_pixel.y = _sy + (_ey - _sy) * t
+                            g._draw_player_eyes()
+                            if t >= 1.0:
+                                Clock.unschedule(_exit_slide)
+                                if g.snd_victory and not app.is_muted:
+                                    g.snd_victory.play()
+                                g.player_group.clear()
+                                g.hatch_open = False
+                                app.root.get_screen('game').show_overlay('win')
+
+                        Clock.schedule_interval(_exit_slide, 1.0 / 60.0)
+                        return
                     target_cell = (ngx, ngy)
                     prog = max(0.0, min(1.0, self.enemy_time / self.enemy_step_interval)) if self.enemy_step_interval > 0 else 1.0
                     blocked = False
@@ -2143,7 +2300,8 @@ class GameWorldBase(Widget):
         if n <= 0:
             return []
 
-        player_dists = self.get_topological_distances(self.hatch_pos)
+        # FIX: player starts at entrance_cell instead of hatch_pos
+        player_dists = self.get_topological_distances(self.entrance_cell)
 
         if not self.SPREAD_SPAWNS:
             all_picks = []
@@ -2257,6 +2415,7 @@ class GameWorldStatic(GameWorldBase):
         self.p_speed = 0.99
         p_spawn = data['p_spawn']
         self.hatch_pos = tuple(p_spawn)
+        self._compute_entrance_cell()
 
         self._build_canvas()
         self.level_group = InstructionGroup()
@@ -2291,7 +2450,8 @@ class GameWorldStatic(GameWorldBase):
             self.sleep_cycle_set = set(save_data.get('sleep_cycle_set',
                                                       set(e['idx'] for e in self.enemies)))
         else:
-            self.player_grid = Vector(p_spawn[0], p_spawn[1])
+            # FIX: player starts at entrance_cell instead of hatch_pos
+            self.player_grid = Vector(self.entrance_cell[0], self.entrance_cell[1])
             self.p_pixel = self.player_grid * TOTAL_STEP
             self.p_dir = VEC_ZERO
             self.last_p_dir = Vector(0, 1)
@@ -2501,6 +2661,8 @@ class GameWorldStatic(GameWorldBase):
                     self.static_group.add(Rectangle(pos=(px + CELL_SIZE, py - WALL_THICK),
                                                     size=(WALL_THICK, TOTAL_STEP + WALL_THICK)))
 
+        self._draw_entrance_hole(self.static_group)
+
     def draw_doors(self):
         self.doors_group.clear()
         DOOR_W = WALL_THICK / 3.0
@@ -2520,26 +2682,7 @@ class GameWorldStatic(GameWorldBase):
 
     def draw_interactive(self, *args):
         self.interactive_group.clear()
-        hx, hy = self.hatch_pos
-        hx_px, hy_px = hx * TOTAL_STEP, hy * TOTAL_STEP
-        hs = CELL_SIZE * 0.9
-        off = (CELL_SIZE - hs) / 2
-        cx, cy = hx_px + CELL_SIZE / 2, hy_px + CELL_SIZE / 2
-        r = hs / 2
-        if not self.hatch_open:
-            self.interactive_group.add(Color(0.4, 0.4, 0.4, 0.6))
-            self.interactive_group.add(Ellipse(pos=(hx_px + off, hy_px + off), size=(hs, hs)))
-            self.interactive_group.add(Color(0.2, 0.2, 0.2, 0.8))
-            self.interactive_group.add(Line(circle=(cx, cy, r), width=1.5))
-            c45 = math.cos(math.radians(45)) * r
-            self.interactive_group.add(Line(points=[cx - c45, cy - c45, cx + c45, cy + c45], width=1.5))
-            self.interactive_group.add(Line(points=[cx - c45, cy + c45, cx + c45, cy - c45], width=1.5))
-        else:
-            self.interactive_group.add(Color(0.05, 0.05, 0.05, 0.6))
-            self.interactive_group.add(Ellipse(pos=(hx_px + off, hy_px + off), size=(hs, hs)))
-            self.interactive_group.add(Color(0, 1, 0.5, 0.8))
-            self.interactive_group.add(Line(circle=(cx, cy, r), width=1.5))
-
+        # FIX8: hatch removed — the map has no central exit marker anymore.
         star_size = CELL_SIZE - 4
         for pos, cid in self.ground_buttons.items():
             bx, by = pos
@@ -2730,6 +2873,7 @@ class GameWorldLarge(GameWorldBase):
         self.p_speed = 0.99
         p_spawn = data['p_spawn']
         self.hatch_pos = tuple(p_spawn)
+        self._compute_entrance_cell()
 
         self._build_canvas()
         self.level_group = InstructionGroup()
@@ -2773,7 +2917,8 @@ class GameWorldLarge(GameWorldBase):
             self.sleep_cycle_set = set(save_data.get('sleep_cycle_set',
                                                       set(e['idx'] for e in self.enemies)))
         else:
-            self.player_grid = Vector(p_spawn[0], p_spawn[1])
+            # FIX: player starts at entrance_cell instead of hatch_pos
+            self.player_grid = Vector(self.entrance_cell[0], self.entrance_cell[1])
             self.p_pixel = self.player_grid * TOTAL_STEP
             self.p_dir = VEC_ZERO
             self.last_p_dir = Vector(0, 1)
@@ -3005,6 +3150,8 @@ class GameWorldLarge(GameWorldBase):
                     self.static_group.add(Rectangle(pos=(cx - WALL_THICK, cy - WALL_THICK),
                                                     size=(WALL_THICK, TOTAL_STEP + WALL_THICK)))
 
+        self._draw_entrance_hole(self.static_group, (min_x, max_x, min_y, max_y))
+
     def draw_doors(self, px, py):
         self.doors_group.clear()
         DOOR_W = WALL_THICK / 3.0
@@ -3029,26 +3176,7 @@ class GameWorldLarge(GameWorldBase):
     def draw_interactive(self, px, py):
         self.interactive_group.clear()
         d = self._static_delta
-        hx, hy = self.hatch_pos
-        if abs(hx - px) <= d and abs(hy - py) <= d:
-            hx_px, hy_px = hx * TOTAL_STEP, hy * TOTAL_STEP
-            hs = CELL_SIZE * 0.9
-            off = (CELL_SIZE - hs) / 2
-            cx, cy = hx_px + CELL_SIZE / 2, hy_px + CELL_SIZE / 2
-            r = hs / 2
-            if not self.hatch_open:
-                self.interactive_group.add(Color(0.4, 0.4, 0.4, 0.6))
-                self.interactive_group.add(Ellipse(pos=(hx_px + off, hy_px + off), size=(hs, hs)))
-                self.interactive_group.add(Color(0.2, 0.2, 0.2, 0.8))
-                self.interactive_group.add(Line(circle=(cx, cy, r), width=1.5))
-                c45 = math.cos(math.radians(45)) * r
-                self.interactive_group.add(Line(points=[cx - c45, cy - c45, cx + c45, cy + c45], width=1.5))
-                self.interactive_group.add(Line(points=[cx - c45, cy + c45, cx + c45, cy - c45], width=1.5))
-            else:
-                self.interactive_group.add(Color(0.05, 0.05, 0.05, 0.6))
-                self.interactive_group.add(Ellipse(pos=(hx_px + off, hy_px + off), size=(hs, hs)))
-                self.interactive_group.add(Color(0, 1, 0.5, 0.8))
-                self.interactive_group.add(Line(circle=(cx, cy, r), width=1.5))
+        # FIX8: hatch removed — the map has no central exit marker anymore.
         star_size = CELL_SIZE - 4
         for pos, cid in self.ground_buttons.items():
             bx, by = pos
@@ -3366,7 +3494,7 @@ class GameWorldLarge(GameWorldBase):
         btn_color = None
         show_hatch = False
         if self.hatch_open:
-            d = self.player_dists.get(self.hatch_pos, 9999)
+            d = self.player_dists.get(self.entrance_cell, 9999)
             if d < 9999:
                 btn_dist = d
             show_hatch = True
@@ -3464,13 +3592,15 @@ class MazeJoystick(Widget):
             return
         a = math.degrees(math.atan2(dx, dy)) % 360
         idx = 0 if (315 <= a or a < 45) else 1 if 45 <= a < 135 else 2 if 135 <= a < 225 else 3
-        self.game.current_joy_dir = Vector(self.sectors[idx]['v'])
+        v = Vector(self.sectors[idx]['v'])
+        self.game.current_joy_dir = v
+
         if self.active_sector != idx:
             self.active_sector = idx
             self.game._joy_break = True
             if self.snd_click and not app.is_muted:
                 self.snd_click.play()
-            self.game.next_dir = Vector(self.sectors[idx]['v'])
+            self.game.next_dir = v
             self.redraw()
 
 
