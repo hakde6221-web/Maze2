@@ -24,6 +24,7 @@ from kivy.core.text import Label as CoreLabel
 from kivy.core.window import Window
 from kivy.metrics import sp
 from kivy.animation import Animation
+from kivy.properties import NumericProperty
 
 CELL_SIZE, WALL_THICK = 40, 10
 TOTAL_STEP = CELL_SIZE + WALL_THICK
@@ -659,20 +660,56 @@ SND_VICTORY_PATH = SoundGenerator.create_beep(
     [196.00, 196.00, 261.63, 329.63, 392.00, 329.63, 392.00, 523.25],
     [0.20, 0.20, 0.20, 0.25, 0.30, 0.15, 0.25, 1.30], "victory2")
 
+# --- Короткий деревянный стук (добавлено fix.py) ---
+def _create_wood_click():
+    fname = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "sys_wood_click.wav")
+    try:
+        if os.path.exists(fname) and os.path.getsize(fname) > 0:
+            return fname
+    except OSError:
+        pass
+    sample_rate = 44100
+    duration = 0.09
+    buf = io.BytesIO()
+    try:
+        with wave.open(buf, 'wb') as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(sample_rate)
+            n = int(sample_rate * duration)
+            for i in range(n):
+                t = i / sample_rate
+                env = math.exp(-t * 55)
+                s = (0.50 * math.sin(2 * math.pi * 750 * t) +
+                     0.28 * math.sin(2 * math.pi * 1180 * t) +
+                     0.18 * math.sin(2 * math.pi * 1730 * t))
+                if i < n * 0.04:
+                    s += random.uniform(-0.7, 0.7) * (1 - i / (n * 0.04))
+                wav.writeframes(struct.pack('<h', int(32767 * 0.55 * env * s)))
+        with open(fname, 'wb') as f:
+            f.write(buf.getvalue())
+        return fname
+    except Exception:
+        return None
+
+SND_WOOD_CLICK_PATH = _create_wood_click()
+
+
 _ENEMY_DROP_SPECS = [
-    ([125, 250, 125, 250],        [0.19, 0.1, 0.19, 0.1], "enemy_drop_0v3"),
-    ([150, 300, 150, 300], [0.19, 0.1, 0.19, 0.1], "enemy_drop_1v3"),
-    ([175, 350, 175, 350],       [0.19, 0.1, 0.19, 0.1], "enemy_drop_2v3"),
-    ([200, 400, 200, 400],       [0.19, 0.1, 0.19, 0.1], "enemy_drop_3v3"),
-    ([225, 450, 225, 450],   [0.19, 0.1, 0.19, 0.1], "enemy_drop_4v3"),
+    ([125, 250, 125, 250],        [0.1, 0.1, 0.1, 0.1], "enemy_drop_0v3"),
+    ([150, 300, 150, 300], [0.1, 0.1, 0.1, 0.1], "enemy_drop_1v3"),
+    ([175, 350, 175, 350],       [0.1, 0.1, 0.1, 0.1], "enemy_drop_2v3"),
+    ([200, 400, 200, 400],       [0.1, 0.1, 0.1, 0.1], "enemy_drop_3v3"),
+    ([225, 450, 225, 450],   [0.1, 0.1, 0.1, 0.1], "enemy_drop_4v3"),
 ]
 
 _ENEMY_PICKUP_SPECS = [
-    ([125, 250],      [0.19, 0.1], "enemy_pickup_0v3"),
-    ([150, 300],  [0.19, 0.1], "enemy_pickup_1v3"),
-    ([175, 350],      [0.19, 0.1], "enemy_pickup_2v3"),
-    ([200, 400],      [0.19, 0.1], "enemy_pickup_3v3"),
-    ([225, 450],    [0.19, 0.1], "enemy_pickup_4v3"),
+    ([125, 250],      [0.1, 0.1], "enemy_pickup_0v3"),
+    ([150, 300],  [0.1, 0.1], "enemy_pickup_1v3"),
+    ([175, 350],      [0.1, 0.1], "enemy_pickup_2v3"),
+    ([200, 400],      [0.1, 0.1], "enemy_pickup_3v3"),
+    ([225, 450],    [0.1, 0.1], "enemy_pickup_4v3"),
 ]
 
 SND_ENEMY_DROP_PATHS = [SoundGenerator.create_beep(f, d, n) for f, d, n in _ENEMY_DROP_SPECS]
@@ -3217,7 +3254,16 @@ class GameWorldLarge(GameWorldBase):
                 rgb = self.color_palette[btn_color] if 0 <= btn_color < len(self.color_palette) else (0.5, 0.5, 0.5)
                 _draw_star(self.hud_extra_group, cx_t + big_diam / 2, row3_cy, big_diam, rgb)
             elif show_hatch:
-                self._draw_hatch_icon(cx_t + big_diam / 2, row3_cy, big_diam, group=self.hud_extra_group)
+                _exit_tex = get_text_texture("Exit", f_size)
+                if _exit_tex.size[0] > big_diam:
+                    _ef = max(8, int(f_size * big_diam / _exit_tex.size[0]))
+                    _exit_tex = get_text_texture("Exit", _ef)
+                self.hud_extra_group.add(Color(*TEXT_COLOR, 1))
+                self.hud_extra_group.add(Rectangle(
+                    texture=_exit_tex,
+                    pos=(cx_t + big_diam / 2 - _exit_tex.size[0] / 2,
+                         row3_cy - _exit_tex.size[1] / 2),
+                    size=_exit_tex.size))
             cx_t += big_diam + 6
             val_str = f"{btn_dist}" if btn_dist is not None else "-"
             self._draw_text(val_str, cx_t, row3_cy, f_size, group=self.hud_extra_group)
@@ -3264,7 +3310,16 @@ class GameWorldLarge(GameWorldBase):
                 rgb = self.color_palette[btn_color] if 0 <= btn_color < len(self.color_palette) else (0.5, 0.5, 0.5)
                 _draw_star(self.hud_extra_group, icon_cx, row_y, big_diam, rgb)
             elif show_hatch:
-                self._draw_hatch_icon(icon_cx, row_y, big_diam, group=self.hud_extra_group)
+                _exit_tex = get_text_texture("Exit", f_size)
+                if _exit_tex.size[0] > big_diam:
+                    _ef = max(8, int(f_size * big_diam / _exit_tex.size[0]))
+                    _exit_tex = get_text_texture("Exit", _ef)
+                self.hud_extra_group.add(Color(*TEXT_COLOR, 1))
+                self.hud_extra_group.add(Rectangle(
+                    texture=_exit_tex,
+                    pos=(icon_cx - _exit_tex.size[0] / 2,
+                         row_y - _exit_tex.size[1] / 2),
+                    size=_exit_tex.size))
 
             val_str = f"{btn_dist}" if btn_dist is not None else "-"
             tex_v = get_text_texture(val_str, f_size)
@@ -3518,23 +3573,80 @@ class PlayerIcon(Widget):
                     size=(eye_r * 2, eye_r * 2))
 
 
-class MenuModeButton(Button):
-    def __init__(self, subtext='', **kwargs):
-        super().__init__(**kwargs)
-        self._sub_label = Label(text=subtext, font_size='13sp', bold=True,
-                                color=(*TEXT_COLOR, 1), halign='center', valign='bottom')
-        self.add_widget(self._sub_label)
-        self.bind(pos=self._update_sub_layout, size=self._update_sub_layout)
-        self._update_sub_layout()
+class HollowOvalButton(Button):
+    """Кнопка — полый овал в цвете стен лабиринта.
 
-    def _update_sub_layout(self, *args):
+    При нажатии: короткая жёлтая вспышка + короткий деревянный стук.
+    """
+
+    _flash_amount = NumericProperty(0.0)
+
+    def __init__(self, subtext=None, **kwargs):
+        kwargs.setdefault('background_normal', '')
+        kwargs.setdefault('background_down', '')
+        kwargs.setdefault('background_disabled_normal', '')
+        kwargs.setdefault('background_disabled_down', '')
+        kwargs.setdefault('background_color', (0, 0, 0, 0))
+        super().__init__(**kwargs)
+        self._wood_snd = (SoundLoader.load(SND_WOOD_CLICK_PATH)
+                          if SND_WOOD_CLICK_PATH else None)
+        self._oval_group = InstructionGroup()
+        self.canvas.before.add(self._oval_group)
+        self.bind(pos=self._redraw, size=self._redraw,
+                  _flash_amount=self._redraw,
+                  on_press=self._handle_press)
+        if subtext:
+            self._sub_label = Label(text=subtext, font_size='13sp', bold=True,
+                                    color=(*TEXT_COLOR, 1),
+                                    halign='center', valign='bottom')
+            self.add_widget(self._sub_label)
+            self.bind(pos=self._layout_sub, size=self._layout_sub)
+            self._layout_sub()
+        self._redraw()
+
+    def _layout_sub(self, *args):
         if not hasattr(self, '_sub_label'):
             return
-        self._sub_label.pos = self.pos
-        self._sub_label.size = self.size
-        self._sub_label.text_size = (self.width, self.height)
+        inset = self.height * 0.06
+        self._sub_label.pos = (self.x, self.y + inset)
+        self._sub_label.size = (self.width, self.height - inset)
+        self._sub_label.text_size = (self.width, self.height - inset)
         self._sub_label.halign = 'center'
         self._sub_label.valign = 'bottom'
+
+    def _redraw(self, *args):
+        if self.width <= 1 or self.height <= 1:
+            return
+        self._oval_group.clear()
+        if self._flash_amount > 0:
+            self._oval_group.add(Color(1, 1, 0, 0.30 * self._flash_amount))
+            self._oval_group.add(
+                Rectangle(pos=(self.x, self.y), size=(self.width, self.height)))
+        self._oval_group.add(Color(*WALL_COLOR))
+        self._oval_group.add(
+            Line(rectangle=(self.x, self.y, self.width, self.height), width=2.5))
+        if self._flash_amount > 0:
+            self._oval_group.add(Color(1, 1, 0, self._flash_amount))
+            self._oval_group.add(
+                Line(rectangle=(self.x, self.y, self.width, self.height),
+                     width=2.5 + 3.5 * self._flash_amount))
+
+    def _handle_press(self, *args):
+        Animation.cancel_all(self, '_flash_amount')
+        self._flash_amount = 1.0
+        Animation(_flash_amount=0.0, duration=0.35, t='out_quad').start(self)
+        if self._wood_snd is not None:
+            app = App.get_running_app()
+            if app is None or not getattr(app, 'is_muted', False):
+                try:
+                    self._wood_snd.play()
+                except Exception:
+                    pass
+
+
+class MenuModeButton(HollowOvalButton):
+    def __init__(self, subtext='', **kwargs):
+        super().__init__(subtext=subtext, **kwargs)
 
 
 class LoadingScreen(Screen):
@@ -3784,9 +3896,10 @@ class GameScreen(Screen):
                 saves_count = len(get_save_files())
 
                 def _mk_btn(text, pos_hint, callback):
-                    b = Button(text=text, font_size='20sp',
-                               size_hint=(0.48, 0.14),
-                               pos_hint=pos_hint, color=(*TEXT_COLOR, 1))
+                    b = HollowOvalButton(text=text, font_size='20sp',
+                                         size_hint=(0.48, 0.14),
+                                         pos_hint=pos_hint,
+                                         color=(*TEXT_COLOR, 1))
                     b.bind(on_release=callback)
                     overlay.add_widget(b)
 
