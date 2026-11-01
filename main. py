@@ -140,6 +140,46 @@ def get_map_file():
     return os.path.join(_get_save_dir(), _MAP_FILES[CURRENT_MODE])
 
 
+# FIX11: per-mode death counter, stored in a tiny separate text file next
+# to doors.py. Corrupting this file cannot damage the map (they are
+# separate files), and any read error falls back to -1 => first load = 0.
+def _get_death_file():
+    return os.path.join(_get_save_dir(), f"deaths_{CURRENT_MODE}.txt")
+
+
+def _read_deaths():
+    path = _get_death_file()
+    try:
+        with open(path, 'r') as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return -1
+
+
+def _write_deaths(n):
+    path = _get_death_file()
+    tmp = path + '.tmp'
+    try:
+        with open(tmp, 'w') as f:
+            f.write(str(n))
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _reset_deaths():
+    path = _get_death_file()
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
 def get_save_prefix():
     return _SAVE_PREFIXES[CURRENT_MODE]
 
@@ -1168,24 +1208,6 @@ class GameWorldBase(Widget):
         self._cam_scale = None
         self._cam_offset = None
 
-    def _save_death_to_map(self, data):
-        # FIX10: persist the updated death counter back into the map file.
-        # A plain pickle round-trip of the existing pre_gen_data dict, so it
-        # cannot corrupt the map: if writing fails, the .tmp file is removed
-        # and the original map file is left untouched.
-        map_file = get_map_file()
-        tmp_path = map_file + '.tmp'
-        try:
-            with open(tmp_path, 'wb') as f:
-                pickle.dump(data, f)
-            os.replace(tmp_path, map_file)
-        except Exception:
-            try:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-            except OSError:
-                pass
-
     def _load_save_data(self):
         app = App.get_running_app()
         slot = getattr(app, 'load_slot', 'last')
@@ -2092,6 +2114,21 @@ class GameWorldBase(Widget):
                     # player, and show victory — no per-frame checks in the
                     # loop, no pixel tests.
                     if not (0 <= ngx < self.grid_w and 0 <= ngy < self.grid_h):
+                        # FIX_VICTORY_LOS: если клетка входа (gx, gy) под лучом
+                        # врага, победа отменяется — игрок пойман в момент выхода.
+                        # Причина старого поведения: проверка "игрок целиком на
+                        # клетке" (len(last_p_cells) == 1) выполняется в начале
+                        # подшага, а победа срабатывала в этом же подшаге до
+                        # следующей итерации, где игрок наконец оказался бы
+                        # ровно на клетке входа. Поэтому на клетке E проверка
+                        # луча "съедалась" тем же подшагом, что и победа.
+                        # Теперь клетка входа проверяется явно, до победы.
+                        if (gx, gy) in self.union_visible_cells:
+                            self.active = False
+                            if self.snd_lose and not app.is_muted:
+                                self.snd_lose.play()
+                            app.root.get_screen('game').show_overlay('lose')
+                            return
                         self.active = False
                         self.last_p_dir = Vector(self.p_dir)
                         _sx, _sy = self.p_pixel.x, self.p_pixel.y
@@ -2420,12 +2457,12 @@ class GameWorldStatic(GameWorldBase):
         self.maze_data = data['grid']
         self.grid_w, self.grid_h = self.GRID_W, self.GRID_H
         self.level = data.get('level', 1)
-        # FIX10: death counter is stored in the map file, initialised
-        # to -1 so the first load (which increments it) shows 0.
-        # It persists across reloads of the same map and resets
-        # whenever the map file is regenerated (new level / mode).
-        self.death_count = data.get('death', -1) + 1
-        data['death'] = self.death_count
+        # FIX11: death counter lives in a tiny per-mode text file
+        # (deaths_XX.txt) instead of inside the map pickle. Faster to
+        # write, and the map file is never touched on load, so a power
+        # loss cannot corrupt the map. Initial -1 => first load shows 0.
+        self.death_count = _read_deaths() + 1
+        _write_deaths(self.death_count)
 
         self.adj_list = {(x, y): [(x + dx, y + dy) for d, (dx, dy) in DIRS.items()
                                   if self.maze_data[y][x][d] == 0]
@@ -2550,7 +2587,6 @@ class GameWorldStatic(GameWorldBase):
 
         self.bind(size=self.trigger_static_redraw, pos=self.trigger_static_redraw)
         self._update_event = Clock.schedule_interval(self.update, 1 / 60.0)
-        self._save_death_to_map(data)
 
     def update_transforms(self):
         sw, sh = self.width, self.height
@@ -2886,12 +2922,12 @@ class GameWorldLarge(GameWorldBase):
         self.maze_data = data['grid']
         self.grid_w, self.grid_h = len(self.maze_data[0]), len(self.maze_data)
         self.level = data.get('level', 1)
-        # FIX10: death counter is stored in the map file, initialised
-        # to -1 so the first load (which increments it) shows 0.
-        # It persists across reloads of the same map and resets
-        # whenever the map file is regenerated (new level / mode).
-        self.death_count = data.get('death', -1) + 1
-        data['death'] = self.death_count
+        # FIX11: death counter lives in a tiny per-mode text file
+        # (deaths_XX.txt) instead of inside the map pickle. Faster to
+        # write, and the map file is never touched on load, so a power
+        # loss cannot corrupt the map. Initial -1 => first load shows 0.
+        self.death_count = _read_deaths() + 1
+        _write_deaths(self.death_count)
         self.last_drawn_chunk = None
 
         self.adj_list = {(x, y): [(x + dx, y + dy) for d, (dx, dy) in DIRS.items()
@@ -3036,7 +3072,6 @@ class GameWorldLarge(GameWorldBase):
 
         self.bind(size=self.trigger_static_redraw, pos=self.trigger_static_redraw)
         self._update_event = Clock.schedule_interval(self.update, 1 / 60.0)
-        self._save_death_to_map(data)
 
     def update_transforms(self):
         sw, sh = self.width, self.height
@@ -3883,6 +3918,9 @@ class LoadingScreen(Screen):
 
         max_attempts = 12
         success = False
+        # FIX11: track whether the final map came from the cache (=> keep
+        # the death counter) or was generated fresh (=> reset it).
+        loaded_from_cache = False
 
         for attempt in range(max_attempts):
             pre_data = None
@@ -3893,11 +3931,13 @@ class LoadingScreen(Screen):
                         d = pickle.load(f)
                     if d.get('version') == MAP_VERSION and 'door_colors' in d:
                         pre_data = d
+                        loaded_from_cache = True
                 except Exception:
                     pre_data = None
 
             if pre_data is None:
                 pre_data = self._generate_grid(mode)
+                loaded_from_cache = False
 
             grid = pre_data.get('grid')
             if not grid:
@@ -3946,6 +3986,12 @@ class LoadingScreen(Screen):
 
             if pending and map_ok:
                 delete_all_saves()
+            loaded_from_cache = False
+
+        # FIX11: fresh map => reset the per-mode death counter.
+        # Same cached map => keep counting where we left off.
+        if not loaded_from_cache:
+            _reset_deaths()
 
         app.is_restarting = False
         Clock.schedule_once(lambda dt: setattr(self.manager, 'current', 'game'), 0)
