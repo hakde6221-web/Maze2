@@ -1168,6 +1168,24 @@ class GameWorldBase(Widget):
         self._cam_scale = None
         self._cam_offset = None
 
+    def _save_death_to_map(self, data):
+        # FIX10: persist the updated death counter back into the map file.
+        # A plain pickle round-trip of the existing pre_gen_data dict, so it
+        # cannot corrupt the map: if writing fails, the .tmp file is removed
+        # and the original map file is left untouched.
+        map_file = get_map_file()
+        tmp_path = map_file + '.tmp'
+        try:
+            with open(tmp_path, 'wb') as f:
+                pickle.dump(data, f)
+            os.replace(tmp_path, map_file)
+        except Exception:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+
     def _load_save_data(self):
         app = App.get_running_app()
         slot = getattr(app, 'load_slot', 'last')
@@ -2402,6 +2420,12 @@ class GameWorldStatic(GameWorldBase):
         self.maze_data = data['grid']
         self.grid_w, self.grid_h = self.GRID_W, self.GRID_H
         self.level = data.get('level', 1)
+        # FIX10: death counter is stored in the map file, initialised
+        # to -1 so the first load (which increments it) shows 0.
+        # It persists across reloads of the same map and resets
+        # whenever the map file is regenerated (new level / mode).
+        self.death_count = data.get('death', -1) + 1
+        data['death'] = self.death_count
 
         self.adj_list = {(x, y): [(x + dx, y + dy) for d, (dx, dy) in DIRS.items()
                                   if self.maze_data[y][x][d] == 0]
@@ -2526,6 +2550,7 @@ class GameWorldStatic(GameWorldBase):
 
         self.bind(size=self.trigger_static_redraw, pos=self.trigger_static_redraw)
         self._update_event = Clock.schedule_interval(self.update, 1 / 60.0)
+        self._save_death_to_map(data)
 
     def update_transforms(self):
         sw, sh = self.width, self.height
@@ -2727,8 +2752,10 @@ class GameWorldStatic(GameWorldBase):
 
             level_tex = get_text_texture(f"Level-{self.level}", f_size)
             doors_x = 15 + level_tex.size[0] + 20
-            dw = self._draw_text("Doors:", doors_x, top_row_cy, f_size, group=self.hud_static_group)
-            self._draw_text(str(self.num_doors), doors_x + dw + 6, top_row_cy, f_size, group=self.hud_static_group)
+            dw = self._draw_text(
+                f"Doors: {self.num_doors}   Death: {self.death_count}",
+                doors_x, top_row_cy, f_size,
+                group=self.hud_static_group)
 
             icon_r = min(f_size * 0.55, row_h * 0.4)
             trophy_top_y = maze_top + self.hud_h - row_h
@@ -2745,7 +2772,7 @@ class GameWorldStatic(GameWorldBase):
             self.hud_static_group.add(Rectangle(texture=tex_lvl, pos=(cx - tex_lvl.size[0]/2, cur_y - tex_lvl.size[1]/2), size=tex_lvl.size))
             cur_y -= row_h * 1.2
 
-            tex_doors = get_text_texture(f"Doors: {self.num_doors}", f_size)
+            tex_doors = get_text_texture(f"Doors: {self.num_doors}   Death: {self.death_count}", f_size)
             self.hud_static_group.add(Color(*TEXT_COLOR, 1))
             self.hud_static_group.add(Rectangle(texture=tex_doors, pos=(cx - tex_doors.size[0]/2, cur_y - tex_doors.size[1]/2), size=tex_doors.size))
             cur_y -= row_h * 1.2
@@ -2859,6 +2886,12 @@ class GameWorldLarge(GameWorldBase):
         self.maze_data = data['grid']
         self.grid_w, self.grid_h = len(self.maze_data[0]), len(self.maze_data)
         self.level = data.get('level', 1)
+        # FIX10: death counter is stored in the map file, initialised
+        # to -1 so the first load (which increments it) shows 0.
+        # It persists across reloads of the same map and resets
+        # whenever the map file is regenerated (new level / mode).
+        self.death_count = data.get('death', -1) + 1
+        data['death'] = self.death_count
         self.last_drawn_chunk = None
 
         self.adj_list = {(x, y): [(x + dx, y + dy) for d, (dx, dy) in DIRS.items()
@@ -2994,6 +3027,7 @@ class GameWorldLarge(GameWorldBase):
 
         self.bind(size=self.trigger_static_redraw, pos=self.trigger_static_redraw)
         self._update_event = Clock.schedule_interval(self.update, 1 / 60.0)
+        self._save_death_to_map(data)
 
     def update_transforms(self):
         sw, sh = self.width, self.height
@@ -3290,8 +3324,10 @@ class GameWorldLarge(GameWorldBase):
 
             level_tex = get_text_texture(f"Level-{self.level}", f_size)
             doors_x = 15 + level_tex.size[0] + 20
-            dw = self._draw_text("Doors:", doors_x, top_row_cy, f_size, group=self.hud_static_group)
-            self._draw_text(str(self.num_doors), doors_x + dw + 6, top_row_cy, f_size, group=self.hud_static_group)
+            dw = self._draw_text(
+                f"Doors: {self.num_doors}   Death: {self.death_count}",
+                doors_x, top_row_cy, f_size,
+                group=self.hud_static_group)
 
             icon_r = min(f_size * 0.55, row_h * 0.4)
             trophy_top_y = maze_top + self.hud_h - row_h
@@ -3308,7 +3344,7 @@ class GameWorldLarge(GameWorldBase):
             self.hud_static_group.add(Rectangle(texture=tex_lvl, pos=(cx - tex_lvl.size[0]/2, cur_y - tex_lvl.size[1]/2), size=tex_lvl.size))
             cur_y -= row_h * 1.1
 
-            tex_doors = get_text_texture(f"Doors: {self.num_doors}", f_size)
+            tex_doors = get_text_texture(f"Doors: {self.num_doors}   Death: {self.death_count}", f_size)
             self.hud_static_group.add(Color(*TEXT_COLOR, 1))
             self.hud_static_group.add(Rectangle(texture=tex_doors, pos=(cx - tex_doors.size[0]/2, cur_y - tex_doors.size[1]/2), size=tex_doors.size))
             cur_y -= row_h * 1.1
