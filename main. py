@@ -2909,6 +2909,15 @@ class GameWorldLarge(GameWorldBase):
         self._compute_entrance_cell()
 
         self._build_canvas()
+        # FIX12: thin purple border around the maze viewport (large mode only).
+        # Drawn on the root canvas (outside the stencil) so it is never clipped.
+        self._maze_border_group = InstructionGroup()
+        self._maze_border_color = Color(0.6, 0.2, 1.0, 1)
+        self._maze_border_line = Line(width=2)
+        self._maze_border_group.add(self._maze_border_color)
+        self._maze_border_group.add(self._maze_border_line)
+        self.canvas.add(self._maze_border_group)
+
         self.level_group = InstructionGroup()
         self.canvas.add(self.level_group)
         self._init_checkpoint_label()
@@ -3072,6 +3081,9 @@ class GameWorldLarge(GameWorldBase):
         self.stencil_rect1.size = (maze_size, maze_size)
         self.stencil_rect2.pos = (maze_left, maze_bottom)
         self.stencil_rect2.size = (maze_size, maze_size)
+        # FIX12: keep the purple border in sync with the maze viewport.
+        self._maze_border_line.rectangle = (
+            maze_left, maze_bottom, maze_size, maze_size)
 
     def update_camera(self):
         if self._cam_translate is None:
