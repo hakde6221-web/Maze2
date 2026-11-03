@@ -894,6 +894,7 @@ class GameWorldBase(Widget):
     SAVE_VERSION = 0
     IS_LARGE = False
     SPREAD_SPAWNS = False
+    _player_opened_door = None
 
     cached_btn_dist = None
     cached_btn_color = None
@@ -1504,7 +1505,19 @@ class GameWorldBase(Widget):
             if len(idx_list) > 1:
                 idx_list.sort()
                 by_idx = {en['idx']: en for en in active_enemies}
-                for participant_idx in idx_list:
+                rules = {i: by_idx[i]['turn_rule'] for i in idx_list}
+                to_flip = set()
+                _n = len(idx_list)
+                for _a in range(_n):
+                    _ia = idx_list[_a]
+                    for _b in range(_a + 1, _n):
+                        _ib = idx_list[_b]
+                        if rules[_ia] == rules[_ib]:
+                            to_flip.add(_ia)
+                            to_flip.add(_ib)
+                        else:
+                            to_flip.add(_ib)
+                for participant_idx in to_flip:
                     en = by_idx[participant_idx]
                     en['turn_rule'] = 'left' if en['turn_rule'] == 'right' else 'right'
                     en['last_drawn_dir'] = (None, None)
@@ -1534,9 +1547,13 @@ class GameWorldBase(Widget):
     def _refresh_player_dists(self):
         start_cell = (int(self.player_grid.x), int(self.player_grid.y))
         # FIX8: hatch removed — the relevant goal cell is the entrance.
+        # OPT: расстояния до врагов из player_dists читает только HUD
+        # large-режима; в 10/15/20 они не используются, и добавление
+        # врагов в цели лишь отдаляет early-exit BFS без пользы.
         targets = {self.entrance_cell}
-        for en in self.enemies:
-            targets.add(en['current_cell'])
+        if self.IS_LARGE:
+            for en in self.enemies:
+                targets.add(en['current_cell'])
         for pos in self.ground_buttons:
             targets.add(pos)
         self.player_dists = self.get_topological_distances(start_cell, targets)
@@ -1915,6 +1932,9 @@ class GameWorldBase(Widget):
             if _c is not None:
                 _star_events.append((_c, False))
 
+        # OPT: если несколько врагов подобрали звезду в одном тике,
+        # BFS-пересчёт делается один раз, а не на каждого.
+        _did_pickup = False
         for en in self.enemies:
             if not en.get('_just_moved', False):
                 continue
@@ -1924,10 +1944,12 @@ class GameWorldBase(Widget):
                 continue
             if en['current_cell'] in self.ground_buttons:
                 _c = self._pickup_button(en)
-                self._refresh_player_dists()
-                self._update_compass()
                 if _c is not None:
+                    _did_pickup = True
                     _star_events.append((_c, True))
+        if _did_pickup:
+            self._refresh_player_dists()
+            self._update_compass()
 
         if _star_events:
             _c, _is_pickup = min(_star_events)
@@ -2140,11 +2162,24 @@ class GameWorldBase(Widget):
 
                 if was_moving and self.p_dir == VEC_ZERO and not just_picked and self.snd_stop and not app.is_muted:
                     self.snd_stop.play()
+                if was_moving and self.p_dir == VEC_ZERO and self._player_opened_door is not None:
+                    self._player_opened_door = None
+                    self._doors_changed = True
                 if self.p_dir != VEC_ZERO:
                     self.last_p_dir = Vector(self.p_dir)
                     self._held_dir_at_leave = self.current_joy_dir
                     self._joy_break = False
+                    _old_cell = (gx, gy)
                     self.player_grid += self.p_dir
+                    _new_cell = (int(self.player_grid.x), int(self.player_grid.y))
+                    _edge = (_old_cell, _new_cell) if _old_cell < _new_cell else (_new_cell, _old_cell)
+                    if _edge in self.doors:
+                        if self._player_opened_door != _edge:
+                            self._player_opened_door = _edge
+                            self._doors_changed = True
+                    elif self._player_opened_door is not None:
+                        self._player_opened_door = None
+                        self._doors_changed = True
                     self._refresh_player_dists()
                     self._update_compass()
                     _refreshed_this_step = True
@@ -2797,15 +2832,21 @@ class GameWorldStatic(GameWorldBase):
         if not self.color_palette: return
         open_doors = self._open_doors
         for (a, b) in self.doors:
-            if (a, b) in open_doors:
-                continue
             cid = self.door_color_id.get((a, b))
             if cid is None: continue
             r, g, bl = self.color_palette[cid]
             self.doors_group.add(Color(r, g, bl, 1.0))
             cx = (a[0] + b[0]) * 0.5 * TOTAL_STEP + CELL_SIZE / 2.0
             cy = (a[1] + b[1]) * 0.5 * TOTAL_STEP + CELL_SIZE / 2.0
-            if a[0] != b[0]:
+            if (a, b) in open_doors or (a, b) == self._player_opened_door:
+                stub = half * 2 / 6.0
+                if a[0] != b[0]:
+                    self.doors_group.add(Rectangle(pos=(cx - DOOR_W / 2, cy - half), size=(DOOR_W, stub)))
+                    self.doors_group.add(Rectangle(pos=(cx - DOOR_W / 2, cy + half - stub), size=(DOOR_W, stub)))
+                else:
+                    self.doors_group.add(Rectangle(pos=(cx - half, cy - DOOR_W / 2), size=(stub, DOOR_W)))
+                    self.doors_group.add(Rectangle(pos=(cx + half - stub, cy - DOOR_W / 2), size=(stub, DOOR_W)))
+            elif a[0] != b[0]:
                 self.doors_group.add(Rectangle(pos=(cx - DOOR_W / 2, cy - half), size=(DOOR_W, half * 2)))
             else:
                 self.doors_group.add(Rectangle(pos=(cx - half, cy - DOOR_W / 2), size=(half * 2, DOOR_W)))
@@ -3313,8 +3354,6 @@ class GameWorldLarge(GameWorldBase):
         d = self._static_delta
         open_doors = self._open_doors
         for (a, b) in self.doors:
-            if (a, b) in open_doors:
-                continue
             mx, my = (a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5
             if abs(mx - px) > d or abs(my - py) > d:
                 continue
@@ -3324,7 +3363,15 @@ class GameWorldLarge(GameWorldBase):
             self.doors_group.add(Color(r, g, bl, 1.0))
             cx = mx * TOTAL_STEP + CELL_SIZE / 2.0
             cy = my * TOTAL_STEP + CELL_SIZE / 2.0
-            if a[0] != b[0]:
+            if (a, b) in open_doors or (a, b) == self._player_opened_door:
+                stub = half * 2 / 6.0
+                if a[0] != b[0]:
+                    self.doors_group.add(Rectangle(pos=(cx - DOOR_W / 2, cy - half), size=(DOOR_W, stub)))
+                    self.doors_group.add(Rectangle(pos=(cx - DOOR_W / 2, cy + half - stub), size=(DOOR_W, stub)))
+                else:
+                    self.doors_group.add(Rectangle(pos=(cx - half, cy - DOOR_W / 2), size=(stub, DOOR_W)))
+                    self.doors_group.add(Rectangle(pos=(cx + half - stub, cy - DOOR_W / 2), size=(stub, DOOR_W)))
+            elif a[0] != b[0]:
                 self.doors_group.add(Rectangle(pos=(cx - DOOR_W / 2, cy - half), size=(DOOR_W, half * 2)))
             else:
                 self.doors_group.add(Rectangle(pos=(cx - half, cy - DOOR_W / 2), size=(half * 2, DOOR_W)))
@@ -4079,7 +4126,7 @@ class LoadingScreen(Screen):
 class GameScreen(Screen):
     def on_enter(self):
         _schedule_canvas_refresh()
-        App.get_running_app().is_paused = False
+        App.get_running_app().is_paused = True
         self.f = FloatLayout()
         if CURRENT_MODE == MODE_10:
             self.game = GameWorld10()
