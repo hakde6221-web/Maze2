@@ -2206,9 +2206,17 @@ class GameWorldBase(Widget):
             ticked = True
             if not self.active:
                 gx2, gy2 = int(self.player_grid.x), int(self.player_grid.y)
+                # FIX: на стоп-кадре смерти enemy_tick уже обновил
+                # _open_doors (дверь физически открыта — иначе луч
+                # через неё не прошёл бы). Но draw_doors в этом
+                # пути не вызывался, и дверь визуально оставалась
+                # закрытой. Отрисовываем двери из актуального
+                # _open_doors перед стоп-кадром.
                 if self.IS_LARGE:
+                    self.draw_doors(gx2, gy2)
                     self.draw_entities(gx2, gy2)
                 else:
+                    self.draw_doors()
                     self.draw_entities()
                 return
 
