@@ -2275,14 +2275,23 @@ class GameWorldBase(Widget):
                         'rgba': (0, 0, 0, 0), 'active': False}
                 en['_beam_inst'] = beam
             if _cull:
+                # FIX: culling по bounding box луча (а не по позиции
+                # врага). Луч идёт от current_cell на len(visible_cells)
+                # клеток в направлении dir. Если его bbox пересекает
+                # 13x13-квадрат (±_cvr от игрока) — рисуем. Для врага
+                # с dir=0 или пустым visible_cells bbox = его клетка,
+                # то есть поведение совпадает с прежним.
+                _vc_c = en.get('visible_cells')
+                _edir_c = en['dir']
+                _edx_c, _edy_c = int(_edir_c.x), int(_edir_c.y)
+                _cnt_c = len(_vc_c) if _vc_c else 0
                 _ccx, _ccy = en['current_cell']
-                _ncx, _ncy = en['next_cell']
-                _vcx = _ccx + (_ncx - _ccx) * progress
-                _vcy = _ccy + (_ncy - _ccy) * progress
-                if abs(_vcx - _cgx) > _cvr or abs(_vcy - _cgy) > _cvr:
-                    # FIX: луч не сдвигается вместе с группой (beam_group
-                    # добавлен до PushMatrix/Translate), поэтому culling
-                    # группы его не скрывает — гасим явно, как в else ниже.
+                _bex = _ccx + _edx_c * _cnt_c
+                _bey = _ccy + _edy_c * _cnt_c
+                if (max(_ccx, _bex) < _cgx - _cvr or
+                        min(_ccx, _bex) > _cgx + _cvr or
+                        max(_ccy, _bey) < _cgy - _cvr or
+                        min(_ccy, _bey) > _cgy + _cvr):
                     if beam['active']:
                         beam['color'].rgba = (0, 0, 0, 0)
                         beam['tri'].points = [0, 0, 0, 0, 0, 0]
