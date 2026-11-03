@@ -2253,9 +2253,9 @@ class GameWorldBase(Widget):
         if self.enemy_step_interval > 0:
             progress = max(0.0, min(1.0, self.enemy_time / self.enemy_step_interval))
         # OPT: в large-режиме пропускаем расчёт луча для врагов за экраном.
-        # Луч нарисован внутри группы врага, и draw_entities уводит всю группу
-        # в -100000 для off-screen врагов — луч визуально скрыт всё равно.
-        # При возврате врага в кадр луч пересчитывается в этом же кадре.
+        # Луч нарисован внутри beam_group ДО PushMatrix/Translate, поэтому
+        # увод группы врага в -100000 его НЕ скрывает — при отсечении
+        # луч нужно гасить явно (см. ниже).
         _cull = self.IS_LARGE
         if _cull:
             _cgx = int(self.player_grid.x)
@@ -2280,6 +2280,14 @@ class GameWorldBase(Widget):
                 _vcx = _ccx + (_ncx - _ccx) * progress
                 _vcy = _ccy + (_ncy - _ccy) * progress
                 if abs(_vcx - _cgx) > _cvr or abs(_vcy - _cgy) > _cvr:
+                    # FIX: луч не сдвигается вместе с группой (beam_group
+                    # добавлен до PushMatrix/Translate), поэтому culling
+                    # группы его не скрывает — гасим явно, как в else ниже.
+                    if beam['active']:
+                        beam['color'].rgba = (0, 0, 0, 0)
+                        beam['tri'].points = [0, 0, 0, 0, 0, 0]
+                        beam['rgba'] = (0, 0, 0, 0)
+                        beam['active'] = False
                     continue
 
             show = False
