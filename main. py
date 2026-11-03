@@ -2431,7 +2431,7 @@ class GameWorldBase(Widget):
             best_pos = None
             best_score = -1
             for pos in by_color[cid]:
-                score = player_dists.get(pos, 0)
+                score = player_dists.get(pos, 0) / 2
                 for oc, om in carrier_dist.items():
                     if oc != cid:
                         d = om.get(pos, 0)
@@ -2443,29 +2443,6 @@ class GameWorldBase(Widget):
             carriers[cid] = best_pos
             carrier_dist[cid] = self.get_topological_distances(best_pos)
 
-        # PHANTOM: несуществующий "седьмой" субъект. Должен быть БЛИЖЕ
-        # к игроку, чем любой реальный несущий (иначе он притягивал бы
-        # не-несущих врагов к игроку, а не отталкивал). Из таких клеток
-        # выбираем ту, что максимально далека от всех несущих — она
-        # станет дополнительной точкой отталкивания для не-несущих.
-        # В игре его нет; карта его расстояний кладётся в carrier_dist
-        # под ключом -1, чтобы не-несущие видели его через уже
-        # существующий цикл for om in carrier_dist.values().
-        phantom_pos = None
-        if carriers:
-            nearest_carrier_d = min(player_dists.get(pos, 0)
-                                    for pos in carriers.values())
-            phantom_best = -1
-            for pos in self.dead_ends_set:
-                if player_dists.get(pos, 0) >= nearest_carrier_d:
-                    continue
-                score = min(om.get(pos, 0) for om in carrier_dist.values())
-                if score > phantom_best:
-                    phantom_best = score
-                    phantom_pos = pos
-        if phantom_pos is not None:
-            carrier_dist[-1] = self.get_topological_distances(phantom_pos)
-
         all_picks = []
         for cid in sorted(by_color.keys()):
             scored = []
@@ -2473,7 +2450,7 @@ class GameWorldBase(Widget):
                 if pos == carriers[cid]:
                     scored.append((pos, 10**9))
                 else:
-                    score = player_dists.get(pos, 0)
+                    score = player_dists.get(pos, 0) / 2
                     for oc, om in carrier_dist.items():
                         if oc != cid:
                             d = om.get(pos, 0)
