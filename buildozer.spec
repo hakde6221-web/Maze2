@@ -1,13 +1,13 @@
 [app]
 
-title = Maze
+title = Вор в Лабиринте
 package.name = maze2final
 package.domain = org.maze
 
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,wav
 
-version = 2.2.0
+version = 2.2.1
 
 requirements = python3,kivy,pillow
 
