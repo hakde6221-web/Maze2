@@ -1410,6 +1410,10 @@ class GameWorldBase(Widget):
         if app is not None and app.pre_gen_data is not None:
             self.pocket_cells = set(app.pre_gen_data.get('pocket_cells', []))
 
+        self._open_doors = set()
+        self._doors_changed = False
+        self.cell_to_door = self._build_cell_to_door()
+
     def get_occupied_cells(self, pixel_pos):
         eps = 1e-3
         vx = pixel_pos.x / TOTAL_STEP
@@ -1623,7 +1627,7 @@ class GameWorldBase(Widget):
             nx, ny = cx + dx, cy + dy
             a, b = (cx, cy), (nx, ny)
             edge = (a, b) if a < b else (b, a)
-            if edge in self.doors:
+            if edge in self.doors and edge not in self._open_doors:
                 break
             cx, cy = nx, ny
             chain.append((cx, cy))
@@ -1846,49 +1850,9 @@ class GameWorldBase(Widget):
             en['current_cell'] = en['next_cell']
             en['grid'] = Vector(*en['current_cell'])
             en['_just_moved'] = (old != en['current_cell'])
+            en['pause_after_door'] = False
             if en['_just_moved']:
-                key = (old, en['current_cell']) if old < en['current_cell'] else (en['current_cell'], old)
-                pause = (key in self.doors) and (old in self.pocket_cells)
-                if pause:
-                    d = en['dir']
-                    dx, dy = int(d.x), int(d.y)
-                    if dx == 0 and dy == 0:
-                        pause = False
-                    else:
-                        cx, cy = en['current_cell']
-                        nx, ny = cx + dx, cy + dy
-                        can_ahead = False
-                        if 0 <= nx < self.grid_w and 0 <= ny < self.grid_h:
-                            dir_letter = 'E' if dx == 1 else 'W' if dx == -1 else 'N' if dy == 1 else 'S'
-                            if self.maze_data[cy][cx][dir_letter] == 0:
-                                a, b = (cx, cy), (nx, ny)
-                                edge = (a, b) if a < b else (b, a)
-                                door_cid = self.door_color_id.get(edge)
-                                if door_cid is None or door_cid == en.get('color_id'):
-                                    target = (nx, ny)
-                                    occupied = False
-                                    for other in self.enemies:
-                                        if other is en:
-                                            continue
-                                        if other['current_cell'] == target:
-                                            occupied = True
-                                            break
-                                    if not occupied:
-                                        can_ahead = True
-                        pause = can_ahead
-                        if pause:
-                            occupied_all = {o['current_cell'] for o in self.enemies}
-                            tgt = self._compute_intent(en, occupied_all, frozenset())
-                            if tgt is None or tgt == en['current_cell']:
-                                pause = False
-                            else:
-                                tdx, tdy = tgt[0] - cx, tgt[1] - cy
-                                if tdx == dx and tdy == dy:
-                                    pause = False
-                en['pause_after_door'] = pause
                 en['_just_picked'] = False
-            else:
-                en['pause_after_door'] = False
 
         intent_active = [en for en in self.enemies
                          if not en.get('pause_after_door', False)]
@@ -1910,6 +1874,8 @@ class GameWorldBase(Widget):
                     en['dir'] = new_dir
                     en['last_dir'] = new_dir
                     en['next_cell'] = tgt
+
+        self._refresh_open_doors()
 
         enemy_positions = self._get_los_blockers()
 
@@ -1999,6 +1965,7 @@ class GameWorldBase(Widget):
             sub_steps += 1
             if not self.active: break
             self.last_p_cells = self.get_occupied_cells(self.p_pixel)
+            _refreshed_this_step = False
 
             if len(self.last_p_cells) == 1:
                 cell = next(iter(self.last_p_cells))
@@ -2180,12 +2147,16 @@ class GameWorldBase(Widget):
                     self.player_grid += self.p_dir
                     self._refresh_player_dists()
                     self._update_compass()
+                    _refreshed_this_step = True
             else:
                 self.p_pixel += (target - self.p_pixel).normalize() * self.p_speed
 
             if recalc_dists:
-                self._refresh_player_dists()
-                self._update_compass()
+                # OPT: если p_dir-блок выше уже пересчитал dists для того же
+                # player_grid, второй BFS + компас полностью идентичны.
+                if not _refreshed_this_step:
+                    self._refresh_player_dists()
+                    self._update_compass()
                 state_dirty = True
 
         if sub_steps >= _MAX_SUBSTEPS:
@@ -2208,10 +2179,17 @@ class GameWorldBase(Widget):
 
         gx, gy = int(self.player_grid.x), int(self.player_grid.y)
         if self.IS_LARGE:
-            if self.last_drawn_chunk != (gx, gy):
+            _chunk_changed = self.last_drawn_chunk != (gx, gy)
+            _doors_changed = self._doors_changed
+            if _chunk_changed:
                 self.last_drawn_chunk = (gx, gy)
                 self.draw_static(gx, gy)
                 self.draw_interactive(gx, gy)
+            if _doors_changed:
+                self._doors_changed = False
+            # OPT: draw_doors делает clear + пересборку — второй вызов с теми
+            # же (gx, gy) в том же кадре был буквальным повтором первого.
+            if _chunk_changed or _doors_changed:
                 self.draw_doors(gx, gy)
             if self.interactive_redraw_needed:
                 self.interactive_redraw_needed = False
@@ -2222,6 +2200,9 @@ class GameWorldBase(Widget):
             if self.interactive_redraw_needed:
                 self.interactive_redraw_needed = False
                 self.draw_interactive()
+            if self._doors_changed:
+                self._doors_changed = False
+                self.draw_doors()
             self.update_camera()
             self.draw_entities()
 
@@ -2236,6 +2217,15 @@ class GameWorldBase(Widget):
         progress = 1.0
         if self.enemy_step_interval > 0:
             progress = max(0.0, min(1.0, self.enemy_time / self.enemy_step_interval))
+        # OPT: в large-режиме пропускаем расчёт луча для врагов за экраном.
+        # Луч нарисован внутри группы врага, и draw_entities уводит всю группу
+        # в -100000 для off-screen врагов — луч визуально скрыт всё равно.
+        # При возврате врага в кадр луч пересчитывается в этом же кадре.
+        _cull = self.IS_LARGE
+        if _cull:
+            _cgx = int(self.player_grid.x)
+            _cgy = int(self.player_grid.y)
+            _cvr = self._vis_radius
         for en in self.enemies:
             bg = en.get('g_beam_group')
             if bg is None:
@@ -2249,6 +2239,13 @@ class GameWorldBase(Widget):
                 beam = {'color': color_inst, 'tri': tri,
                         'rgba': (0, 0, 0, 0), 'active': False}
                 en['_beam_inst'] = beam
+            if _cull:
+                _ccx, _ccy = en['current_cell']
+                _ncx, _ncy = en['next_cell']
+                _vcx = _ccx + (_ncx - _ccx) * progress
+                _vcy = _ccy + (_ncy - _ccy) * progress
+                if abs(_vcx - _cgx) > _cvr or abs(_vcy - _cgy) > _cvr:
+                    continue
 
             show = False
             pts = None
@@ -2409,6 +2406,7 @@ class GameWorldBase(Widget):
         self.cell_avails = {(x, y): [Vector(v) for d, v in DIRS.items() if self.maze_data[y][x][d] == 0]
                             for y in range(self.grid_h) for x in range(self.grid_w)}
         self.cell_avails_by_color = {}
+        open_doors = getattr(self, '_open_doors', set())
         for cid in range(self.num_colors):
             dd = {}
             for cell, dirs in self.cell_avails.items():
@@ -2416,11 +2414,76 @@ class GameWorldBase(Widget):
                 for v in dirs:
                     nxt = (cell[0] + int(v.x), cell[1] + int(v.y))
                     edge = (cell, nxt) if cell < nxt else (nxt, cell)
+                    if edge in open_doors:
+                        filtered.append(v)
+                        continue
                     dc = self.door_color_id.get(edge)
                     if dc is None or dc == cid:
                         filtered.append(v)
                 dd[cell] = filtered
             self.cell_avails_by_color[cid] = dd
+
+    def _build_cell_to_door(self):
+        result = {}
+        for de, edge in self.door_edges.items():
+            cur = de
+            prev = None
+            steps = 0
+            max_steps = self.grid_w * self.grid_h
+            while steps < max_steps:
+                result[cur] = edge
+                if cur in edge:
+                    break
+                next_cell = None
+                for d, (dx, dy) in DIRS.items():
+                    if self.maze_data[cur[1]][cur[0]][d] == 0:
+                        cand = (cur[0] + dx, cur[1] + dy)
+                        if cand != prev:
+                            next_cell = cand
+                            break
+                if next_cell is None:
+                    break
+                prev = cur
+                cur = next_cell
+                steps += 1
+        return result
+
+    def _rebuild_cell_avail(self, cell):
+        x, y = cell
+        base_dirs = self.cell_avails.get(cell, [])
+        for cid in range(self.num_colors):
+            dirs = []
+            for v in base_dirs:
+                nxt = (x + int(v.x), y + int(v.y))
+                edge = (cell, nxt) if cell < nxt else (nxt, cell)
+                if edge in self._open_doors:
+                    dirs.append(v)
+                    continue
+                dc = self.door_color_id.get(edge)
+                if dc is None or dc == cid:
+                    dirs.append(v)
+            self.cell_avails_by_color[cid][cell] = dirs
+
+    def _refresh_open_doors(self):
+        new_open = set()
+        c2d = self.cell_to_door
+        for en in self.enemies:
+            edge_cur = c2d.get(en['current_cell'])
+            if edge_cur is not None:
+                new_open.add(edge_cur)
+            edge_next = c2d.get(en['next_cell'])
+            if edge_next is not None:
+                new_open.add(edge_next)
+        if new_open == self._open_doors:
+            return
+        changed = new_open ^ self._open_doors
+        self._open_doors = new_open
+        affected = set()
+        for edge in changed:
+            affected.update(edge)
+        for cell in affected:
+            self._rebuild_cell_avail(cell)
+        self._doors_changed = True
 
 
 def _compute_from_cell(player_grid, p_dir, grid_w, grid_h):
@@ -2473,7 +2536,7 @@ class GameWorldStatic(GameWorldBase):
         self._prepare_door_data()
         self._prepare_cell_avails()
 
-        self.p_speed = 0.99
+        self.p_speed = 10/9
         p_spawn = data['p_spawn']
         self.hatch_pos = tuple(p_spawn)
         self._compute_entrance_cell()
@@ -2515,7 +2578,7 @@ class GameWorldStatic(GameWorldBase):
             self.player_grid = Vector(self.entrance_cell[0], self.entrance_cell[1])
             self.p_pixel = self.player_grid * TOTAL_STEP
             self.p_dir = VEC_ZERO
-            self.last_p_dir = Vector(0, 1)
+            self.last_p_dir = -Vector(*DIRS[self.entrance_side])
 
             num_per_color = max(1, self.MAX_ENEMIES // self.num_colors)
             picks = self._pick_balanced_spawns(num_per_color, max_colors=self.num_colors)
@@ -2534,7 +2597,7 @@ class GameWorldStatic(GameWorldBase):
                     rule = 'right' if pat_idx % 2 == 0 else 'left'
                     is_carrier = (i == 0)
                     prof = {'pattern_idx': pat_idx, 'turn_rule': rule,
-                            'speed': 0.5, 'color': WALL_COLOR}
+                            'speed': 5/6, 'color': WALL_COLOR}
                     self.enemies.append(self._make_enemy_dict(
                         slot_idx, prof, saved=False, e_spawn=pos,
                         color_id=cid, is_carrier=is_carrier))
@@ -2562,6 +2625,9 @@ class GameWorldStatic(GameWorldBase):
             if 0 <= cid < self.num_colors:
                 cc[cid] += 1
         self._color_counts_tuple = tuple(cc)
+
+        self._refresh_open_doors()
+        self._doors_changed = False
 
         ref_speed = self.enemies[0]['speed'] if self.enemies else 0.5
         self.enemy_step_interval = TOTAL_STEP / (ref_speed * 60.0)
@@ -2729,7 +2795,10 @@ class GameWorldStatic(GameWorldBase):
         DOOR_W = WALL_THICK / 3.0
         half = CELL_SIZE / 2.0
         if not self.color_palette: return
+        open_doors = self._open_doors
         for (a, b) in self.doors:
+            if (a, b) in open_doors:
+                continue
             cid = self.door_color_id.get((a, b))
             if cid is None: continue
             r, g, bl = self.color_palette[cid]
@@ -2939,7 +3008,7 @@ class GameWorldLarge(GameWorldBase):
         self._prepare_door_data()
         self._prepare_cell_avails()
 
-        self.p_speed = 0.99
+        self.p_speed = 10/9
         p_spawn = data['p_spawn']
         self.hatch_pos = tuple(p_spawn)
         self._compute_entrance_cell()
@@ -2999,7 +3068,7 @@ class GameWorldLarge(GameWorldBase):
             self.player_grid = Vector(self.entrance_cell[0], self.entrance_cell[1])
             self.p_pixel = self.player_grid * TOTAL_STEP
             self.p_dir = VEC_ZERO
-            self.last_p_dir = Vector(0, 1)
+            self.last_p_dir = -Vector(*DIRS[self.entrance_side])
 
             num_per_color = max(1, self._max_enemies // self.num_colors)
             picks = self._pick_balanced_spawns(num_per_color, max_colors=self.num_colors)
@@ -3019,7 +3088,7 @@ class GameWorldLarge(GameWorldBase):
                     rule = 'right' if pat_idx % 2 == 0 else 'left'
                     is_carrier = (i == 0)
                     prof = {'pattern_idx': pat_idx, 'turn_rule': rule,
-                            'speed': 0.5, 'color': WALL_COLOR}
+                            'speed': 5/6, 'color': WALL_COLOR}
                     self.enemies.append(self._make_enemy_dict(
                         slot_idx, prof, saved=False, e_spawn=pos,
                         color_id=cid, is_carrier=is_carrier))
@@ -3047,6 +3116,9 @@ class GameWorldLarge(GameWorldBase):
             if 0 <= cid < self.num_colors:
                 cc[cid] += 1
         self._color_counts_tuple = tuple(cc)
+
+        self._refresh_open_doors()
+        self._doors_changed = False
 
         ref_speed = self.enemies[0]['speed'] if self.enemies else 0.5
         self.enemy_step_interval = TOTAL_STEP / (ref_speed * 60.0)
@@ -3239,7 +3311,10 @@ class GameWorldLarge(GameWorldBase):
         half = CELL_SIZE / 2.0
         if not self.color_palette: return
         d = self._static_delta
+        open_doors = self._open_doors
         for (a, b) in self.doors:
+            if (a, b) in open_doors:
+                continue
             mx, my = (a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5
             if abs(mx - px) > d or abs(my - py) > d:
                 continue
@@ -4102,8 +4177,9 @@ class GameScreen(Screen):
             self.f.add_widget(overlay)
 
             def _show_win_btn(dt):
-                btn = Button(text=f'Level {App.get_running_app().current_level + 1}',
-                             size_hint=(0.8, 0.1), pos_hint={'center_x': 0.5, 'y': 0.05},
+                btn = HollowOvalButton(text=f'Level {App.get_running_app().current_level + 1}',
+                             font_size='20sp',
+                             size_hint=(0.8, 0.14), pos_hint={'center_x': 0.5, 'y': 0.05},
                              color=(*TEXT_COLOR, 1))
                 btn.bind(on_release=lambda x: self.next_lvl())
                 overlay.add_widget(btn)
