@@ -2553,6 +2553,10 @@ class GameWorldBase(Widget):
             return
         changed = new_open ^ self._open_doors
         self._open_doors = new_open
+        # FIX: сбрасываем кэш LOS — старые записи могли быть сделаны
+        # при другом состоянии дверей, из-за чего лучи проходили
+        # сквозь закрытые двери до естественного сброса.
+        self._los_cache.clear()
         affected = set()
         for edge in changed:
             affected.update(edge)
