@@ -919,6 +919,7 @@ class GameWorldBase(Widget):
         self.snd_victory = SoundLoader.load(SND_VICTORY_PATH)
         self.snd_enemy_drop = [SoundLoader.load(p) if p else None for p in SND_ENEMY_DROP_PATHS]
         self.snd_enemy_pickup = [SoundLoader.load(p) if p else None for p in SND_ENEMY_PICKUP_PATHS]
+        self.snd_door = SoundLoader.load(SND_WOOD_CLICK_PATH) if SND_WOOD_CLICK_PATH else None
 
     def _init_checkpoint_label(self):
         tex = get_text_texture('Checkpoint', 56)
@@ -1511,17 +1512,21 @@ class GameWorldBase(Widget):
                 _first = idx_list[0]
                 _last = idx_list[-1]
                 if _first == _gmin and _last == _gmax:
-                    to_flip = (_first, _last)
                     for loser in idx_list[:-1]:
                         intents[loser] = None
+                    en_first = by_idx[_first]
+                    en_last = by_idx[_last]
+                    if en_first['turn_rule'] == en_last['turn_rule']:
+                        en_first['turn_rule'] = 'left' if en_first['turn_rule'] == 'right' else 'right'
+                        en_first['last_drawn_dir'] = (None, None)
                 else:
-                    to_flip = (_last,)
                     for loser in idx_list[1:]:
                         intents[loser] = None
-                for participant_idx in to_flip:
-                    en = by_idx[participant_idx]
-                    en['turn_rule'] = 'left' if en['turn_rule'] == 'right' else 'right'
-                    en['last_drawn_dir'] = (None, None)
+                    en_first = by_idx[_first]
+                    en_last = by_idx[_last]
+                    if en_first['turn_rule'] != en_last['turn_rule']:
+                        en_last['turn_rule'] = 'left' if en_last['turn_rule'] == 'right' else 'right'
+                        en_last['last_drawn_dir'] = (None, None)
 
         return intents
 
@@ -2186,6 +2191,8 @@ class GameWorldBase(Widget):
                         if self._player_opened_door != _edge:
                             self._player_opened_door = _edge
                             self._doors_changed = True
+                            if self.snd_door and not app.is_muted:
+                                self.snd_door.play()
                     elif self._player_opened_door is not None:
                         self._player_opened_door = None
                         self._doors_changed = True
