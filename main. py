@@ -1492,6 +1492,9 @@ class GameWorldBase(Widget):
             active_enemies = self.enemies
         occupied = {en['current_cell'] for en in self.enemies}
         empty_blocked = frozenset()
+        _all_idx = [en['idx'] for en in self.enemies]
+        _gmin = min(_all_idx) if _all_idx else -1
+        _gmax = max(_all_idx) if _all_idx else -1
         intents = {en['idx']: self._compute_intent(en, occupied, empty_blocked)
                    for en in active_enemies}
 
@@ -1505,24 +1508,20 @@ class GameWorldBase(Widget):
             if len(idx_list) > 1:
                 idx_list.sort()
                 by_idx = {en['idx']: en for en in active_enemies}
-                rules = {i: by_idx[i]['turn_rule'] for i in idx_list}
-                to_flip = set()
-                _n = len(idx_list)
-                for _a in range(_n):
-                    _ia = idx_list[_a]
-                    for _b in range(_a + 1, _n):
-                        _ib = idx_list[_b]
-                        if rules[_ia] == rules[_ib]:
-                            to_flip.add(_ia)
-                            to_flip.add(_ib)
-                        else:
-                            to_flip.add(_ib)
+                _first = idx_list[0]
+                _last = idx_list[-1]
+                if _first == _gmin and _last == _gmax:
+                    to_flip = (_first, _last)
+                    for loser in idx_list[:-1]:
+                        intents[loser] = None
+                else:
+                    to_flip = (_last,)
+                    for loser in idx_list[1:]:
+                        intents[loser] = None
                 for participant_idx in to_flip:
                     en = by_idx[participant_idx]
                     en['turn_rule'] = 'left' if en['turn_rule'] == 'right' else 'right'
                     en['last_drawn_dir'] = (None, None)
-                for loser in idx_list[1:]:
-                    intents[loser] = None
 
         return intents
 
@@ -2073,12 +2072,22 @@ class GameWorldBase(Widget):
                         if not (is_180 and held_cont):
                             self.p_dir = nd
                     elif nd is not None:
-                        best = None
-                        best_dot = -2
-                        tie = False
+                        _avail_nd = []
+                        _avail_d = []
                         for d in avail:
                             if d.x == -self.last_p_dir.x and d.y == -self.last_p_dir.y:
                                 continue
+                            _nxt = (gx + int(d.x), gy + int(d.y))
+                            _e = ((gx, gy), _nxt) if (gx, gy) < _nxt else (_nxt, (gx, gy))
+                            if _e in self.doors:
+                                _avail_d.append(d)
+                            else:
+                                _avail_nd.append(d)
+                        _candidates = _avail_nd if _avail_nd else _avail_d
+                        best = None
+                        best_dot = -2
+                        tie = False
+                        for d in _candidates:
                             dot = d.x * self.last_p_dir.x + d.y * self.last_p_dir.y
                             if dot > best_dot:
                                 best_dot = dot
@@ -2600,7 +2609,7 @@ class GameWorldStatic(GameWorldBase):
         self._prepare_door_data()
         self._prepare_cell_avails()
 
-        self.p_speed = 10/9
+        self.p_speed = 25/24
         p_spawn = data['p_spawn']
         self.hatch_pos = tuple(p_spawn)
         self._compute_entrance_cell()
@@ -3078,7 +3087,7 @@ class GameWorldLarge(GameWorldBase):
         self._prepare_door_data()
         self._prepare_cell_avails()
 
-        self.p_speed = 10/9
+        self.p_speed = 25/24
         p_spawn = data['p_spawn']
         self.hatch_pos = tuple(p_spawn)
         self._compute_entrance_cell()
