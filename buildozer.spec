@@ -1,13 +1,13 @@
 [app]
 
-title = Вор в Лабиринте
+title = Thief in Maze
 package.name = maze2final
 package.domain = org.maze
 
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,wav
 
-version = 2.2.1
+version = 2.2.2
 
 requirements = python3,kivy,pillow
 
