@@ -1195,10 +1195,10 @@ class GameWorldBase(Widget):
         self.p_left_eye_inst = Ellipse(size=(0, 0))
         self.p_right_eye_inst = Ellipse(size=(0, 0))
         self.p_compass_color = Color(0, 0, 0, 0)
-        self.p_compass_rect = Rectangle(pos=(-1000, -1000), size=(0, 0))
+        self.p_compass_tri = Triangle(points=[-1000, -1000, -1000, -1000, -1000, -1000])
         for i in (self.p_color_inst, self.p_body_inst,
                   self.p_eye_color_inst, self.p_left_eye_inst, self.p_right_eye_inst,
-                  self.p_compass_color, self.p_compass_rect):
+                  self.p_compass_color, self.p_compass_tri):
             self.player_group.add(i)
         self.dynamic_group.add(self.player_group)
         self.compass_dir = None
@@ -1215,6 +1215,7 @@ class GameWorldBase(Widget):
         slot = getattr(app, 'load_slot', 'last')
         self._loaded_from_prev = False
         self._locked_prev_path = None
+        self._has_save_data = False
         if slot == 'fresh':
             return None
         if slot == 'pre_last':
@@ -1233,6 +1234,7 @@ class GameWorldBase(Widget):
             with open(path, 'rb') as f:
                 loaded = pickle.load(f)
                 if loaded.get('version') == self.SAVE_VERSION:
+                    self._has_save_data = True
                     return loaded
         except Exception:
             pass
@@ -1524,7 +1526,7 @@ class GameWorldBase(Widget):
                         intents[loser] = None
                     en_first = by_idx[_first]
                     en_last = by_idx[_last]
-                    if en_first['turn_rule'] != en_last['turn_rule']:
+                    if en_first['turn_rule'] == en_last['turn_rule']:
                         en_last['turn_rule'] = 'left' if en_last['turn_rule'] == 'right' else 'right'
                         en_last['last_drawn_dir'] = (None, None)
 
@@ -1549,6 +1551,11 @@ class GameWorldBase(Widget):
         return dist
 
     def _refresh_player_dists(self):
+        # OPT: player_dists читается только в 40x40 (компас + HUD).
+        # В 10/15/20 полный BFS на каждом шаге игрока — чистая потеря:
+        # результат нигде не используется. Геймплей и визуал не меняются.
+        if not self.IS_LARGE:
+            return
         start_cell = (int(self.player_grid.x), int(self.player_grid.y))
         # FIX8: hatch removed — the relevant goal cell is the entrance.
         # OPT: расстояния до врагов из player_dists читает только HUD
@@ -1561,28 +1568,6 @@ class GameWorldBase(Widget):
         for pos in self.ground_buttons:
             targets.add(pos)
         self.player_dists = self.get_topological_distances(start_cell, targets)
-        self._refresh_button_distance()
-
-    def _refresh_button_distance(self):
-        self.cached_btn_dist = None
-        self.cached_btn_color = None
-        if self.hatch_open:
-            d = self.player_dists.get(self.entrance_cell, 9999)
-            if d < 9999:
-                self.cached_btn_dist = d
-            return
-        if not self.ground_buttons:
-            return
-        min_d, min_color, tied = 9999, None, False
-        for pos, cid in self.ground_buttons.items():
-            d = self.player_dists.get(pos, 9999)
-            if d < min_d:
-                min_d, min_color, tied = d, cid, False
-            elif d == min_d:
-                tied = True
-        if min_d < 9999 and not tied:
-            self.cached_btn_dist = min_d
-            self.cached_btn_color = min_color
 
     def _get_compass_target(self):
         if self.hatch_open:
@@ -2387,25 +2372,25 @@ class GameWorldBase(Widget):
             if cd is not None:
                 cdx, cdy = cd
                 r = CELL_SIZE / 2.0
-                marker_size = 10
-                marker_thick = 4
+                # Красивый компас: треугольная стрелка на краю игрока,
+                # остриём указывающая в сторону цели. Один Triangle
+                # вместо одного Rectangle — та же стоимость, но форма
+                # читается как указатель. Цвет прежний (чёрный).
+                ah = r - 5
+                at = r + 4
+                aw = 6
                 if cdx == 0 and cdy == 1:
-                    mx, my = pcx - marker_size/2, pcy + r - marker_thick
-                    mw, mh = marker_size, marker_thick
+                    pts = [pcx, pcy + at, pcx - aw, pcy + ah, pcx + aw, pcy + ah]
                 elif cdx == 0 and cdy == -1:
-                    mx, my = pcx - marker_size/2, pcy - r
-                    mw, mh = marker_size, marker_thick
+                    pts = [pcx, pcy - at, pcx - aw, pcy - ah, pcx + aw, pcy - ah]
                 elif cdx == 1 and cdy == 0:
-                    mx, my = pcx + r - marker_thick, pcy - marker_size/2
-                    mw, mh = marker_thick, marker_size
+                    pts = [pcx + at, pcy, pcx + ah, pcy - aw, pcx + ah, pcy + aw]
                 elif cdx == -1 and cdy == 0:
-                    mx, my = pcx - r, pcy - marker_size/2
-                    mw, mh = marker_thick, marker_size
+                    pts = [pcx - at, pcy, pcx - ah, pcy - aw, pcx - ah, pcy + aw]
                 else:
-                    mx, my, mw, mh = -1000, -1000, 0, 0
+                    pts = [-1000, -1000, -1000, -1000, -1000, -1000]
                 self.p_compass_color.rgba = (0, 0, 0, 1)
-                self.p_compass_rect.pos = (mx, my)
-                self.p_compass_rect.size = (mw, mh)
+                self.p_compass_tri.points = pts
             else:
                 self.p_compass_color.a = 0.0
         else:
@@ -4193,6 +4178,7 @@ class GameScreen(Screen):
         self.pause_btn = PauseButton(size_hint=(None, None))
         self.f.add_widget(self.pause_btn)
 
+        App.get_running_app().is_paused = self.game._has_save_data
         self.add_widget(self.f)
         self.bind(size=self._relayout, pos=self._relayout)
         self._relayout()
